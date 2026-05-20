@@ -1,64 +1,529 @@
-# dash-backend-image
+# dash-backend-docker
 
-This folder runs Dash backend using the Docker Hub image instead of building `dash-backend` locally.
+This folder runs the Dash backend using a pre-built Docker Hub image instead of building `dash-backend` locally.
 
 It is pre-configured to use:
-- Local env file: `../dash-backend/.env.dash.local`
-- Domain folder: `../dash-domain` (mounted at `/var/www/html/domain`)
-- Core image: `farandal/dash-backend:1.0.0-core`
+- App env file: `./.env.local` (mounted as `/var/www/html/.env` inside the container)
+- Domain folder: configured via `DOMAIN_PATH` in `.env` (mounted at `/var/www/html/domain`)
+- Core image: configured via `DASH_IMAGE` in `.env` (e.g. `farandal/dash-backend:1.0.0-core`)
 
 Image contract (required):
 - The Docker image must already contain the full Laravel application at `/var/www/html`.
 - At minimum, the image must include: `artisan`, `app/`, `bootstrap/`, `config/`, `database/`, `public/`, `routes/`, `storage/`, `vendor/`.
-- This setup does not mount local backend source code.
-- Use the `-core` tagged images (e.g., `farandal/dash-backend:1.0.0-core`, `farandal/dash-backend:latest-core`) built with `docker-publish-core.sh` in the dash-backend folder.
+- This setup does not mount local backend source code — all app code comes from the image.
+- Use the `-core` tagged images (e.g., `farandal/dash-backend:1.0.0-core`, `farandal/dash-backend:latest-core`) built with `docker-publish-core.sh` in the `dash-backend` folder.
 
-## Requirements
+---
 
-- Docker Desktop (or Docker Engine + Compose v2)
-- Existing files/folders:
-  - `../dash-backend/.env.dash.local`
-  - `../dash-domain`
+## CI Build Flow — `dash-backend` → Docker Hub → `dash-backend-docker`
 
-## Start
+This section documents the complete pipeline for building the core image from the `dash-backend` source project and deploying it here.
 
-From this directory:
+### Architecture overview
+
+```
+dash-backend/                    ← Laravel source + Dockerfile.core + migrations
+    └── docker-publish-core.sh   ← Build & push script
+          │
+          ▼
+    Docker Hub
+    farandal/dash-backend:<tag>  ← Immutable, versioned image
+          │
+          ▼
+dash-backend-docker/             ← This folder: runtime only
+    ├── docker-compose.yml       ← Consumes the image + mounts env + domain
+    ├── .env                     ← Compose variables (image tag, paths, ports, DB creds)
+    └── .env.local               ← App-level Laravel env (mounted as .env inside container)
+```
+
+The image bakes in:
+- PHP 8.3 runtime (Ubuntu 24.04 noble)
+- All PHP extensions (pgsql, redis, gd, intl, mbstring, xml, zip, xdebug, pcov, …)
+- Composer `vendor/` directory
+- Full Laravel application code (`app/`, `routes/`, `config/`, `database/`, `public/`, `resources/`, `storage/`)
+- All database migrations
+
+The image does **not** bake in:
+- `.env` or `.env.*` files (excluded via `.dockerignore` — always mounted at runtime)
+- `bootstrap/cache/*.php` (excluded to ensure runtime env is always used)
+- `storage/` runtime content (logs, sessions, views, cache)
+- `node_modules/`, `aws/`, markdown files
+
+---
+
+### Step 1 — Prepare the `dash-backend` source
+
+From the `dash-backend` project root:
+
+```bash
+cd /path/to/dash-backend
+```
+
+Confirm `.dockerignore` excludes env files (critical — prevents local secrets from being baked into the image):
+
+```
+storage/app/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/logs/*
+node_modules/*
+cache/*
+# Never bake env files into the image — they are mounted at runtime by docker-compose
+.env
+.env.*
+!.env.example
+# Never bake cached config into the image — it would override .env at runtime
+bootstrap/cache/*.php
+aws
+*.md
+DockerFile
+docker.build.sh
+```
+
+> **Why this matters:** Laravel automatically loads `.env.{APP_ENV}` as an override on top of `.env`. If a local `.env.local` is baked into the image and `APP_ENV=local`, it will silently override all values from the mounted runtime env file, including credentials and tenant configuration.
+
+---
+
+### Step 2 — Build and push to Docker Hub
+
+Use `docker-publish-core.sh` from the `dash-backend` project root. The script uses Docker Buildx for multi-architecture support.
+
+#### Full syntax
+
+```bash
+./docker-publish-core.sh \
+  --hub-user <dockerhub-username> \
+  --tag <semver>-core \
+  [--arch arm64|amd64] \
+  [--platform linux/amd64,linux/arm64] \
+  [--skip-push]
+```
+
+| Flag | Required | Default | Description |
+|---|---|---|---|
+| `--hub-user` | Yes | — | Docker Hub username or org |
+| `--tag` | No | `latest-core` | Image tag (use semver, e.g. `1.0.0-core`) |
+| `--arch` | No | both arches | Shorthand for `--platform linux/<arch>` |
+| `--platform` | No | `linux/amd64,linux/arm64` | Full Buildx platform string |
+| `--skip-push` | No | push enabled | Build and load locally only (single arch, no push) |
+
+#### Option A — Multi-arch push (CI / production)
+
+Builds for both `linux/amd64` and `linux/arm64` and pushes to Docker Hub.
+
+```bash
+./docker-publish-core.sh --hub-user farandal --tag 1.0.0-core
+```
+
+Expected output:
+
+```
+┌─────────────────────────────────────────────────┐
+│  dash-backend-core  →  Docker Hub publish       │
+├─────────────────────────────────────────────────┤
+│  Image   : farandal/dash-backend:1.0.0-core     │
+│  Platform: linux/amd64,linux/arm64              │
+│  Push    : true                                 │
+└─────────────────────────────────────────────────┘
+
+You will need to be logged in to Docker Hub:
+Username: farandal
+Password:
+Login Succeeded
+
+[+] Building 111.2s (25/25) FINISHED  docker-container:dash-backend-core-builder
+ => [internal] load build definition from Dockerfile.core                  0.0s
+ => [internal] load metadata for docker.io/library/ubuntu:24.04            1.2s
+ => CACHED [ 2/18] WORKDIR /var/www/html                                   0.0s
+ => CACHED [ 3/18] RUN ln -snf /usr/share/zoneinfo/UTC /etc/localtime      0.0s
+ => CACHED [ 5/18] RUN rm -f /etc/apt/apt.conf.d/docker-clean ...          0.0s
+ => CACHED [ 6/18] RUN apt-get install -y --no-install-recommends ...      0.0s
+ => CACHED [10/18] RUN groupadd --force -g 20 sail                         0.0s
+ => [16/18] COPY . /var/www/html                                           9.9s
+ => [17/18] RUN rm -f /var/www/html/bootstrap/cache/*.php                  0.4s
+ => [18/18] RUN mkdir -p /var/www/html/storage/framework/...              35.9s
+ => pushing manifest for docker.io/farandal/dash-backend:1.0.0-core       12.3s
+
+✓ Done.
+  Pushed: farandal/dash-backend:1.0.0-core
+
+  Others can now run:
+    docker pull farandal/dash-backend:1.0.0-core
+```
+
+#### Option B — Single-arch local load (M1 / arm64 development)
+
+Builds for the host architecture only and loads the image into the local Docker daemon without pushing. Use this to test locally before releasing.
+
+```bash
+./docker-publish-core.sh --hub-user farandal --tag 1.0.0-core --arch arm64 --skip-push
+```
+
+Expected output:
+
+```
+┌─────────────────────────────────────────────────┐
+│  dash-backend-core  →  Docker Hub publish       │
+├─────────────────────────────────────────────────┤
+│  Image   : farandal/dash-backend:1.0.0-core     │
+│  Platform: linux/arm64                          │
+│  Push    : false                                │
+└─────────────────────────────────────────────────┘
+
+Note: --skip-push uses --load which only supports the host platform (linux/arm64).
+[+] Building 111.2s (25/25) FINISHED  docker-container:dash-backend-core-builder
+ => CACHED [ 2/18] WORKDIR /var/www/html                                   0.0s
+ => ...
+ => [16/18] COPY . /var/www/html                                           9.9s
+ => [17/18] RUN rm -f /var/www/html/bootstrap/cache/*.php                  0.4s
+ => [18/18] RUN mkdir -p /var/www/html/storage/framework/...              35.9s
+ => exporting to docker image format                                      60.7s
+ => => exporting layers                                                   20.3s
+ => => sending tarball                                                    40.4s
+ => importing to docker                                                   20.9s
+
+✓ Done.
+```
+
+Verify the image is loaded locally:
+
+```bash
+docker images farandal/dash-backend
+```
+
+Expected output:
+
+```
+REPOSITORY              TAG          IMAGE ID       CREATED         SIZE
+farandal/dash-backend   1.0.0-core   5e60c93808b5   2 minutes ago   1.23GB
+```
+
+---
+
+### Step 3 — Update `dash-backend-docker/.env`
+
+Switch to this folder and update the image tag:
+
+```bash
+cd /path/to/dash-backend-docker
+```
+
+Edit `.env`:
+
+```bash
+COMPOSE_PROJECT_NAME=dash_image
+
+# Docker Hub image
+DASH_IMAGE=farandal/dash-backend:1.0.0-core
+
+# App-level env file — mounted as /var/www/html/.env inside the container
+ENV_FILE=./.env.local
+
+# Domain layer path — mounted as /var/www/html/domain inside the container
+# Set to the path of the domain module on the host (e.g. ../kitchntabs-domain)
+DOMAIN_PATH=../dash-domain
+
+# PostgreSQL credentials — MUST match DB_* values in .env.local exactly
+DB_DATABASE=myappdb
+DB_USERNAME=myappuser
+DB_PASSWORD=12345678
+
+# Host port bindings
+APP_PORT=25000
+DBI_APP_PORT=25000
+DBI_FORWARD_DB_PORT=25432
+DBI_FORWARD_REDIS_PORT=25379
+DBI_FORWARD_MAILHOG_PORT=25025
+DBI_FORWARD_MAILHOG_DASHBOARD_PORT=25026
+DBI_REVERB_SERVER_PORT=25001
+```
+
+> **Important:** The `DB_DATABASE`, `DB_USERNAME`, and `DB_PASSWORD` values in `.env` are used to **initialize the PostgreSQL container**. They must be identical to the same keys inside `.env.local`. A mismatch means the container DB is initialized with different credentials than the app tries to use, causing connection failures.
+
+---
+
+### Step 4 — Configure `.env.local` (app-level environment)
+
+`.env.local` is mounted as `/var/www/html/.env` inside the container. It is the single source of truth for all Laravel configuration at runtime. It is excluded from git (`.gitignore` matches `*.env` and `.env.*`).
+
+**Seeder-driven variables** — control what `migrate:fresh --seed` creates:
+
+```bash
+# System admin — full platform access
+SYSTEM_ADMIN_EMAIL=admin@example.com
+SYSTEM_ADMIN_PASSWORD=12345678
+
+# Default tenant — created during the tenants table migration
+DEFAULT_TENANT_NAME=MockTenant
+DEFAULT_TENANT_PUBLIC_ID=00.000.000-0
+
+# Tenancy admin — manages a tenancy account and its tenants
+TENANCY_ADMIN_EMAIL=tenancy@example.com
+TENANCY_ADMIN_PASSWORD=mock_password_1
+
+# Tenant admin — manages a single tenant
+TENANT_ADMIN_EMAIL=tenant@example.com
+TENANT_ADMIN_PASSWORD=mock_password_2
+
+# Normal user — basic access
+NORMAL_USER_EMAIL=user@example.com
+NORMAL_USER_PASSWORD=mock_password_3
+```
+
+**Database connection** (must match `.env`):
+
+```bash
+DB_CONNECTION=pgsql
+DB_HOST=pgsql
+DB_PORT=5432
+DB_DATABASE=myappdb
+DB_USERNAME=myappuser
+DB_PASSWORD=12345678
+```
+
+> **Duplicate key warning:** dotenv reads files top-to-bottom; the **last** occurrence of a key wins. If `.env.local` has a `DEFAULT_TENANT_NAME` block near the top and another further down in a legacy config section, the last value is what Laravel sees. Run `grep -n "DEFAULT_TENANT_NAME" .env.local` to check.
+
+---
+
+### Step 5 — Start the stack
+
+Tear down any previous state including volumes (required when DB credentials or image changed):
+
+```bash
+docker compose down -v
+```
+
+Expected output:
+
+```
+[+] down 8/8
+ ✔ Container dash_image_app              Removed    1.5s
+ ✔ Container dash_image_mailhog          Removed    1.3s
+ ✔ Container dash_image_redis            Removed    0.4s
+ ✔ Container dash_image_pgsql            Removed    0.3s
+ ✔ Volume dash_image_dash-composer-cache Removed    0.0s
+ ✔ Volume dash_image_dash-pgsql          Removed    0.1s
+ ✔ Volume dash_image_dash-redis          Removed    0.0s
+ ✔ Network dash_image_dash               Removed    0.2s
+```
+
+Start the stack:
 
 ```bash
 docker compose up -d
 ```
 
-## First-time app setup
+Expected output (PostgreSQL health check takes ~30 s on first boot):
+
+```
+[+] up 8/8
+ ✔ Network dash_image_dash               Created    0.0s
+ ✔ Volume dash_image_dash-pgsql          Created    0.0s
+ ✔ Volume dash_image_dash-redis          Created    0.0s
+ ✔ Volume dash_image_dash-composer-cache Created    0.0s
+ ✔ Container dash_image_redis            Started    0.4s
+ ✔ Container dash_image_mailhog          Started    0.4s
+ ✔ Container dash_image_pgsql            Healthy   30.9s
+ ✔ Container dash_image_app              Started   31.0s
+```
+
+---
+
+### Step 6 — Run migrations and seed
 
 ```bash
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate --force
+docker compose exec app php artisan migrate:fresh --seed
+```
+
+Expected migration output (every entry must show `DONE`):
+
+```
+  Dropping all tables .....................................................................  82.06ms DONE
+
+   INFO  Preparing database.
+
+  Creating migration table ................................................................   4.64ms DONE
+
+   INFO  Running migrations.
+
+  0000_00_00_000000_create_websockets_statistics_entries_table ..........................   2.61ms DONE
+  0000_00_00_000000_rename_statistics_counters ..........................................   1.35ms DONE
+  2019_08_19_000000_queues_create_failed_jobs_table .....................................   4.83ms DONE
+  2022_1_14_000301_system_create_permission_tables ......................................  14.81ms DONE
+  2022_1_14_000302_system_create_revisions_table ........................................   3.35ms DONE
+  2022_1_14_000302_system_create_teams_permission_tables ................................   0.22ms DONE
+  2022_1_14_000309_system_create_tenants_table ..........................................   7.03ms DONE
+  2022_1_14_000310_system_create_users_table ............................................   6.70ms DONE
+  2022_1_14_000311_system_create_password_resets_table ..................................   2.04ms DONE
+  2022_1_14_000312_system_create_connections_table ......................................   7.09ms DONE
+  2022_1_14_000313_system_create_notification_configurations_table ......................   3.09ms DONE
+  2022_1_14_000314_system_create_notifications_table ....................................   2.83ms DONE
+  2022_1_14_000315_system_add_sms_notification_to_users .................................   1.01ms DONE
+  2022_1_14_000319_system_create_personal_access_tokens .................................   4.33ms DONE
+  2023_06_07_000001_create_pulse_tables .................................................  12.88ms DONE
+  2023_06_17_123253_create_currencies_table .............................................   2.79ms DONE
+  2023_06_17_124511_create_currency_tenant_table ........................................   3.45ms DONE
+  2024_07_08_184839_create_logs_table ...................................................   3.77ms DONE
+  2024_07_18_125555_create_activity_log_table ...........................................   3.91ms DONE
+  2024_07_18_125556_add_event_column_to_activity_log_table ..............................   1.01ms DONE
+  2024_07_18_125557_add_batch_uuid_column_to_activity_log_table .........................   0.76ms DONE
+  2024_11_29_124428_create_tests_table ..................................................   1.97ms DONE
+  2024_12_21_000001_enable_pg_trgm_extension ............................................   0.74ms DONE
+  2024_12_30_094326_add_contact_info_to_tenants_table ...................................   2.90ms DONE
+  2025_01_15_000001_create_languages_table ..............................................   3.59ms DONE
+  2025_01_15_000001_create_self_service_sessions_table ..................................   9.11ms DONE
+  2025_01_15_000002_add_slug_to_tenants_table ...........................................   1.76ms DONE
+  2025_01_15_000002_create_language_tenant_table ........................................   6.38ms DONE
+  2025_01_15_012101_add_image_path_to_categories_table ..................................   2.09ms DONE
+  2025_01_15_014304_add_custom_columns_to_permissions_table .............................   6.66ms DONE
+  2025_01_15_014434_add_level_column_to_roles_table .....................................   2.18ms DONE
+  2025_01_15_104311_fix_language_tenant_unique_constraint ...............................   2.89ms DONE
+  2025_01_15_214600_create_self_service_session_notifications_table .....................   5.23ms DONE
+  2025_01_15_220930_add_image_fields_to_tenants_table ...................................   1.30ms DONE
+  2025_01_16_000000_create_subscription_plans_table .....................................   4.63ms DONE
+  ...
+  2026_02_25_220000_create_tenancy_system_marketplaces_table ............................   0.78ms DONE
+  2026_02_25_220001_create_tenancy_system_point_of_sales_table ..........................   0.63ms DONE
+```
+
+Expected seeder output (values reflect `.env.local`):
+
+```
+   INFO  Seeding database.
+
+  Database\Seeders\PermissionSeeder ................................................ DONE
+  Database\Seeders\RoleSeeder ...................................................... DONE
+
+  Database\Seeders\UserSeeder ...................................................... RUNNING
+ • Tenancy (account) created: MockTenant Account (tenancy@example.com)
+ • Default Tenant 'MockTenant' linked to Tenancy 'MockTenant Account'
+ • System Admin associated with tenant: MockTenant
+ • System Admin created: SYSTEM ADMIN (admin@example.com) - Role: System
+ • Tenancy Admin associated with tenancy: MockTenant Account
+ • Tenancy Admin associated with tenant: MockTenant
+ • Tenancy Admin created: TENANCY ADMIN (tenancy@example.com) - Role: TenancyAdmin
+ • Tenant Admin associated with tenant: MockTenant
+ • Tenant Admin created: TENANT ADMIN (tenant@example.com) - Role: Tenant
+ • Normal User associated with tenant: MockTenant
+ • Normal User created: NORMAL USER (user@example.com) - Role: User
+  Database\Seeders\UserSeeder ...................................................... DONE
+
+  Database\Seeders\TenantSeeder .................................................... DONE
+  Database\Seeders\SystemMarketplacesSeeder ........................................ DONE
+
+DASH Sync Roles
+Skipping db:sync_roles: command not available.
+
+DASH Update Revisions
+Skipping db:update_revisions: command not available.
+```
+
+> `db:sync_roles` and `db:update_revisions` are domain-layer commands. When no domain is mounted (`DOMAIN_PATH` points to a non-existent directory), they are silently skipped. This is expected behaviour for a core-only environment.
+
+---
+
+### Troubleshooting
+
+#### Seeded tenant name or emails do not match `.env.local`
+
+Laravel loads `.env.{APP_ENV}` as an override on top of `.env`. If `APP_ENV=local` and a `.env.local` was baked into the image (before the `.dockerignore` fix), it overrides the mounted values at runtime.
+
+**Fix:** Ensure `dash-backend/.dockerignore` excludes `.env` and `.env.*`, then rebuild:
+
+```bash
+cd /path/to/dash-backend
+# Confirm .dockerignore has: .env / .env.* / !.env.example
+./docker-publish-core.sh --hub-user farandal --tag 1.0.0-core --arch arm64 --skip-push
+```
+
+Also check for duplicate key definitions inside `.env.local`:
+
+```bash
+grep -n "DEFAULT_TENANT_NAME\|TENANCY_ADMIN_EMAIL" .env.local
+```
+
+Any key defined more than once: the **last** occurrence wins.
+
+#### `migrate:fresh` fails mid-way on a table (e.g. `currencies`)
+
+A core migration calls `ALTER TABLE` on a table that was never created because its `CREATE TABLE` migration exists only in the domain layer and the domain is not mounted.
+
+Check for missing creators in core:
+
+```bash
+grep -rl "currencies\|categories" /path/to/dash-backend/database/migrations/
+```
+
+If only `ALTER` migrations exist (no `CREATE`), copy the `create_<table>` migration from the domain layer into `dash-backend/database/migrations/` and rebuild the image.
+
+#### Database connection refused / authentication failed
+
+`DB_DATABASE`, `DB_USERNAME`, and `DB_PASSWORD` in `.env` are used to **initialize** the Postgres container. If these differ from the matching values in `.env.local`, the app cannot connect.
+
+Fix: align both files, destroy the volume, and restart:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+#### `add_image_path_to_categories_table` completes without the `categories` table existing
+
+This migration has an explicit `Schema::hasTable('categories')` guard and silently no-ops when the table does not exist. This is intentional — the migration is safe to include in core. Categories are provided by the domain layer.
+
+---
+
+## Requirements
+
+- Docker Desktop (or Docker Engine + Compose v2)
+- Existing files:
+  - `./.env.local` (copy from `.env.example` and fill in your values)
+  - `DOMAIN_PATH` directory on the host (optional — stack works without it, domain features disabled)
+
+## Start
+
+```bash
+docker compose up -d
+```
+
+## First-time database setup
+
+```bash
+docker compose exec app php artisan migrate:fresh --seed
 ```
 
 ## Access URLs
 
-- API: `http://localhost:18000`
-- Mailhog UI: `http://localhost:18025`
+- API: `http://localhost:25000` (or `http://localhost:${DBI_APP_PORT}`)
+- Mailhog UI: `http://localhost:25026` (or `http://localhost:${DBI_FORWARD_MAILHOG_DASHBOARD_PORT}`)
 
-Default ports in this folder are intentionally isolated so this stack can run side-by-side with your existing `dash-backend` stack.
-Port variables are prefixed with `DBI_` to avoid collisions with exported vars from other stacks.
+Default ports are prefixed with `DBI_` in `.env` to avoid collisions with other stacks running on the same machine.
 
 ## Useful commands
 
 ```bash
-# logs
+# Follow logs
 docker compose logs -f app
 
-# shell in app container
+# Shell in app container
 docker compose exec app bash
 
-# stop stack
+# Artisan
+docker compose exec app php artisan optimize:clear
+docker compose exec app php artisan route:list
+docker compose exec app php artisan tinker
+
+# Stop stack (preserve volumes)
 docker compose down
+
+# Stop stack and wipe all data
+docker compose down -v
 ```
 
 ## Cloudflare tunnel
 
-The image-only stack keeps the Cloudflare tunnel logic in this folder too. It runs on the host and forwards the published app port from `.env`.
+The Cloudflare tunnel script runs on the host and forwards the published app port from `.env`.
 
 Install Node dependencies once:
 
@@ -73,127 +538,88 @@ pnpm cloudflare:tunnel
 ```
 
 Notes:
-- Uses `APP_PORT` from `dash-backend-image/.env`.
-- Uses `CF_TUNNEL_HOSTNAME=dev-local-api.yourdomain.com` or `--hostname dev-local-api.yourdomain.com`; if no named tunnel token is provided, it falls back to a quick `trycloudflare.com` URL.
-- Falls back to a temporary `trycloudflare.com` URL if no hostname is configured.
-- Updates `APP_URL` in `dash-backend-image/.env` by default.
-- For a custom domain, set either `CF_TUNNEL_TOKEN_FILE` or `CF_TUNNEL_TOKEN` in `.env`.
-- Named tunnel mode now starts with `--url http://localhost:$APP_PORT`, so you do not need a local ingress config file for basic HTTP forwarding.
-- If named tunnel mode hits repeated QUIC dial timeout errors (common on restricted networks), it auto-falls back to a quick `trycloudflare.com` URL.
-- Tune or disable this behavior with `CF_QUIC_ERROR_FALLBACK_ENABLED`, `CF_QUIC_ERROR_FALLBACK_COUNT`, and `CF_QUIC_ERROR_FALLBACK_WINDOW_SEC`.
-- Optional DNS automation: if `CF_API_TOKEN` and (`CF_ZONE_ID` or `CF_ZONE_NAME`) are set, the script auto-creates/updates the CNAME for `CF_TUNNEL_HOSTNAME`.
-- `CF_ZONE_ID` is recommended when zone-name lookup is restricted by token scope.
-- `CF_TUNNEL_CNAME_TARGET` is optional. If omitted, the script derives `<tunnel-id>.cfargotunnel.com` from your tunnel token.
-- `CF_API_TOKEN` is for Cloudflare API calls like DNS management. It does not replace the named tunnel token.
-- `CF_TUNNEL_HOSTNAME` is the hostname to publish, not the tunnel credential itself.
+- Uses `APP_PORT` from `.env`.
+- Uses `CF_TUNNEL_HOSTNAME` for the public domain; falls back to a temporary `trycloudflare.com` URL if not set.
+- Set `CF_TUNNEL_TOKEN_FILE` or `CF_TUNNEL_TOKEN` for a named Cloudflare tunnel.
+- Optional DNS automation: set `CF_API_TOKEN` + `CF_ZONE_ID` (or `CF_ZONE_NAME`) to auto-create/update the CNAME.
+- QUIC fallback: if named tunnel hits repeated QUIC dial timeouts, it auto-falls back to `trycloudflare.com`. Tune with `CF_QUIC_ERROR_FALLBACK_ENABLED`, `CF_QUIC_ERROR_FALLBACK_COUNT`, `CF_QUIC_ERROR_FALLBACK_WINDOW_SEC`.
 
 ## Testing
 
 ### First-time test database setup
 
-The test suite uses a separate PostgreSQL database (`dash_db_test`) configured in `phpunit.xml`. Create it once before running tests:
-
 ```bash
-docker-compose exec pgsql psql -U dashpanel -d dash_dev_db -c "CREATE DATABASE dash_dev_db OWNER dashpanel;"
+docker compose exec pgsql psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "CREATE DATABASE ${DB_DATABASE}_test OWNER $DB_USERNAME;"
 ```
 
-Tests use `RefreshDatabase`, so migrations run automatically on each test run — no separate migrate step is needed.
-
-### `phpunit.xml` environment
-
-| Variable | Value |
-|---|---|
-| `APP_ENV` | `testing` |
-| `DB_CONNECTION` | `pgsql` |
-| `DB_HOST` | `pgsql` |
-| `DB_PORT` | `5432` |
-| `DB_DATABASE` | `dash_db_test` |
-| `CACHE_DRIVER` | `array` |
-| `MAIL_MAILER` | `array` |
-| `QUEUE_CONNECTION` | `sync` |
-| `SESSION_DRIVER` | `array` |
-| `TELESCOPE_ENABLED` | `false` |
+Tests use `RefreshDatabase` — migrations run automatically per test run.
 
 ### Running tests
 
 ```bash
-# Run all tests
-docker-compose exec app php artisan test
+# All tests
+docker compose exec app php artisan test
 
-# Filter by class or method name
-docker-compose exec app php artisan test --filter Auth
-docker-compose exec app php artisan test --filter TenantAuthorizationTest
+# Filter by class or method
+docker compose exec app php artisan test --filter Auth
+docker compose exec app php artisan test --filter TenantAuthorizationTest
 
-# Run a specific test suite
-docker-compose exec app php artisan test --testsuite Core
-docker-compose exec app php artisan test --testsuite Domain
-
-# Wipe and re-seed test DB manually (optional, tests do this automatically)
-docker-compose exec app php artisan migrate:fresh --seed --env=testing
+# By suite
+docker compose exec app php artisan test --testsuite Core
+docker compose exec app php artisan test --testsuite Domain
 ```
 
-> **Note:** `security_opt: seccomp:unconfined` must be set on the `app` service in `docker-compose.yml` (already configured) — otherwise `php artisan test` fails with `proc_open(): posix_spawn() failed`.
+> `security_opt: seccomp:unconfined` must be set on the `app` service (already configured) — otherwise `php artisan test` fails with `proc_open(): posix_spawn() failed`.
 
 ## Customization
 
-Edit `.env` in this folder to change image tag, env file, domain path, or ports.
-
-### Examples
+Edit `.env` in this folder to change image tag, env file path, domain path, or ports.
 
 ```bash
-# use latest core image
-sed -i '' 's#^DASH_IMAGE=.*#DASH_IMAGE=farandal/dash-backend:latest-core#' .env
+# Switch to a new image tag after a build
+sed -i '' 's#^DASH_IMAGE=.*#DASH_IMAGE=farandal/dash-backend:1.1.0-core#' .env
 
-# point to another domain module
+# Point to a different domain module
 sed -i '' 's#^DOMAIN_PATH=.*#DOMAIN_PATH=../another-domain#' .env
 ```
 
-## Docker and Laravel command reference
-
-Run these from this folder (`dash-backend-image`).
+## Full Docker and Artisan reference
 
 ```bash
 # Start / stop / restart
-docker-compose up -d
-docker-compose down
-docker-compose restart app
+docker compose up -d
+docker compose down
+docker compose down -v            # also wipes volumes
+docker compose restart app
 
-# Recreate app container only
-docker-compose up -d --force-recreate app
+# Recreate app container only (picks up image changes without full down/up)
+docker compose up -d --force-recreate app
 
-# Show container status and logs
-docker-compose ps
-docker-compose logs -f app
-docker-compose logs -f pgsql redis mailhog
+# Status and logs
+docker compose ps
+docker compose logs -f app
+docker compose logs -f pgsql redis mailhog
 
 # Shell access
-docker-compose exec app bash
-docker-compose exec pgsql psql -U "$DB_USERNAME" -d "$DB_DATABASE"
-docker-compose exec redis redis-cli
+docker compose exec app bash
+docker compose exec pgsql psql -U "$DB_USERNAME" -d "$DB_DATABASE"
+docker compose exec redis redis-cli
 
-# Laravel Artisan basics
-docker-compose exec app php artisan optimize:clear
-docker-compose exec app php artisan about
-docker-compose exec app php artisan migrate --force
-docker-compose exec app php artisan db:seed --force
-docker-compose exec app php artisan route:list
+# Artisan
+docker compose exec app php artisan optimize:clear
+docker compose exec app php artisan about
+docker compose exec app php artisan migrate --force
+docker compose exec app php artisan migrate:fresh --seed
+docker compose exec app php artisan db:seed --force
+docker compose exec app php artisan route:list
+docker compose exec app php artisan queue:work --tries=1
+docker compose exec app php artisan cache:clear
+docker compose exec app php artisan config:clear
+docker compose exec app php artisan tinker
 
-# Queue / cache / tinker
-docker-compose exec app php artisan queue:work --tries=1
-docker-compose exec app php artisan cache:clear
-docker-compose exec app php artisan config:clear
-docker-compose exec app php artisan tinker
-
-# Composer in container
-docker-compose exec app composer install
-docker-compose exec app composer dump-autoload
-
-# Tests
-# Note: requires security_opt: seccomp:unconfined in docker-compose.yml (already set)
-docker-compose exec app php artisan test
-docker-compose exec app php artisan test --filter SomeTestClass
-docker-compose exec app php artisan migrate:fresh --seed --env=testing
-docker-compose exec app php artisan test --env=testing
+# Composer
+docker compose exec app composer install
+docker compose exec app composer dump-autoload
 
 # Quick health checks
 curl -I http://localhost:${DBI_APP_PORT:-25000}

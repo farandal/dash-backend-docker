@@ -1,2 +1,4 @@
 CF.md
 *.env
+.env.*
+!.env.example

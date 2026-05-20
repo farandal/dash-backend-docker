@@ -66,6 +66,7 @@ services:
 
   mailhog:
     image: "mailhog/mailhog:latest"
+    platform: linux/amd64
     container_name: "${COMPOSE_PROJECT_NAME:-kitchntabs_image}_mailhog"
     ports:
       - "${DBI_FORWARD_MAILHOG_PORT:-11025}:1025"
