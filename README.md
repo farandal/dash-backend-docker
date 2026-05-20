@@ -1,10 +1,10 @@
 # dash-backend-image
 
-This folder runs KitchnTabs backend using the Docker Hub image instead of building `dash-backend` locally.
+This folder runs Dash backend using the Docker Hub image instead of building `dash-backend` locally.
 
 It is pre-configured to use:
-- Local env file: `../dash-backend/.env.kitchntabs.local`
-- Domain folder: `../kitchntabs` (mounted at `/var/www/html/domain`)
+- Local env file: `../dash-backend/.env.dash.local`
+- Domain folder: `../dash-domain` (mounted at `/var/www/html/domain`)
 - Core image: `farandal/dash-backend:1.0.0-core`
 
 Image contract (required):
@@ -17,8 +17,8 @@ Image contract (required):
 
 - Docker Desktop (or Docker Engine + Compose v2)
 - Existing files/folders:
-  - `../dash-backend/.env.kitchntabs.local`
-  - `../kitchntabs`
+  - `../dash-backend/.env.dash.local`
+  - `../dash-domain`
 
 ## Start
 
@@ -74,7 +74,7 @@ pnpm cloudflare:tunnel
 
 Notes:
 - Uses `APP_PORT` from `dash-backend-image/.env`.
-- Uses `CF_TUNNEL_HOSTNAME=dev-local-api.kitchntabs.com` or `--hostname dev-local-api.kitchntabs.com`; if no named tunnel token is provided, it falls back to a quick `trycloudflare.com` URL.
+- Uses `CF_TUNNEL_HOSTNAME=dev-local-api.yourdomain.com` or `--hostname dev-local-api.yourdomain.com`; if no named tunnel token is provided, it falls back to a quick `trycloudflare.com` URL.
 - Falls back to a temporary `trycloudflare.com` URL if no hostname is configured.
 - Updates `APP_URL` in `dash-backend-image/.env` by default.
 - For a custom domain, set either `CF_TUNNEL_TOKEN_FILE` or `CF_TUNNEL_TOKEN` in `.env`.
@@ -94,7 +94,7 @@ Notes:
 The test suite uses a separate PostgreSQL database (`dash_db_test`) configured in `phpunit.xml`. Create it once before running tests:
 
 ```bash
-docker-compose exec pgsql psql -U dashpanel -d kitchntabs_dev_db -c "CREATE DATABASE dash_db_test OWNER dashpanel;"
+docker-compose exec pgsql psql -U dashpanel -d dash_dev_db -c "CREATE DATABASE dash_dev_db OWNER dashpanel;"
 ```
 
 Tests use `RefreshDatabase`, so migrations run automatically on each test run — no separate migrate step is needed.
