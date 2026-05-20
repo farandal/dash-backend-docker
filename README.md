@@ -349,39 +349,6 @@ Expected migration output (every entry must show `DONE`):
 
   0000_00_00_000000_create_websockets_statistics_entries_table ..........................   2.61ms DONE
   0000_00_00_000000_rename_statistics_counters ..........................................   1.35ms DONE
-  2019_08_19_000000_queues_create_failed_jobs_table .....................................   4.83ms DONE
-  2022_1_14_000301_system_create_permission_tables ......................................  14.81ms DONE
-  2022_1_14_000302_system_create_revisions_table ........................................   3.35ms DONE
-  2022_1_14_000302_system_create_teams_permission_tables ................................   0.22ms DONE
-  2022_1_14_000309_system_create_tenants_table ..........................................   7.03ms DONE
-  2022_1_14_000310_system_create_users_table ............................................   6.70ms DONE
-  2022_1_14_000311_system_create_password_resets_table ..................................   2.04ms DONE
-  2022_1_14_000312_system_create_connections_table ......................................   7.09ms DONE
-  2022_1_14_000313_system_create_notification_configurations_table ......................   3.09ms DONE
-  2022_1_14_000314_system_create_notifications_table ....................................   2.83ms DONE
-  2022_1_14_000315_system_add_sms_notification_to_users .................................   1.01ms DONE
-  2022_1_14_000319_system_create_personal_access_tokens .................................   4.33ms DONE
-  2023_06_07_000001_create_pulse_tables .................................................  12.88ms DONE
-  2023_06_17_123253_create_currencies_table .............................................   2.79ms DONE
-  2023_06_17_124511_create_currency_tenant_table ........................................   3.45ms DONE
-  2024_07_08_184839_create_logs_table ...................................................   3.77ms DONE
-  2024_07_18_125555_create_activity_log_table ...........................................   3.91ms DONE
-  2024_07_18_125556_add_event_column_to_activity_log_table ..............................   1.01ms DONE
-  2024_07_18_125557_add_batch_uuid_column_to_activity_log_table .........................   0.76ms DONE
-  2024_11_29_124428_create_tests_table ..................................................   1.97ms DONE
-  2024_12_21_000001_enable_pg_trgm_extension ............................................   0.74ms DONE
-  2024_12_30_094326_add_contact_info_to_tenants_table ...................................   2.90ms DONE
-  2025_01_15_000001_create_languages_table ..............................................   3.59ms DONE
-  2025_01_15_000001_create_self_service_sessions_table ..................................   9.11ms DONE
-  2025_01_15_000002_add_slug_to_tenants_table ...........................................   1.76ms DONE
-  2025_01_15_000002_create_language_tenant_table ........................................   6.38ms DONE
-  2025_01_15_012101_add_image_path_to_categories_table ..................................   2.09ms DONE
-  2025_01_15_014304_add_custom_columns_to_permissions_table .............................   6.66ms DONE
-  2025_01_15_014434_add_level_column_to_roles_table .....................................   2.18ms DONE
-  2025_01_15_104311_fix_language_tenant_unique_constraint ...............................   2.89ms DONE
-  2025_01_15_214600_create_self_service_session_notifications_table .....................   5.23ms DONE
-  2025_01_15_220930_add_image_fields_to_tenants_table ...................................   1.30ms DONE
-  2025_01_16_000000_create_subscription_plans_table .....................................   4.63ms DONE
   ...
   2026_02_25_220000_create_tenancy_system_marketplaces_table ............................   0.78ms DONE
   2026_02_25_220001_create_tenancy_system_point_of_sales_table ..........................   0.63ms DONE
