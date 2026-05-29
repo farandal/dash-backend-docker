@@ -1,5 +1,23 @@
 # dash-backend-docker
 
+## Quick commands:
+
+- docker compose down -v
+- docker compose up -d
+
+- docker compose exec app php artisan migrate:fresh --seed  
+
+- docker compose exec app php artisan reverb:start --debug
+- docker compose exec app php artisan horizon  
+
+- docker compose exec app php artisan test --testsuite Core
+- docker compose exec app php artisan test --testsuite Domain
+
+- docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+
+- docker build -f docker/php8.2/Dockerfile.core -t local/dash-backend-core:latest .
+
+# Overview
 This folder runs the Dash backend using a pre-built Docker Hub image instead of building `dash-backend` locally.
 
 It is pre-configured to use:
@@ -513,18 +531,61 @@ Notes:
 
 ## Testing
 
-### First-time test database setup
+### Prerequisites
+
+The image must contain dev dependencies (`phpunit/phpunit`, `nunomaduro/collision`) for `php artisan test` to register the `test` command. If `php artisan test` prints the artisan help screen with only `test:image-agent` and `test:openai-raw` listed, the test runner is missing.
+
+Verify quickly:
 
 ```bash
-docker compose exec pgsql psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "CREATE DATABASE ${DB_DATABASE}_test OWNER $DB_USERNAME;"
+docker compose exec app bash -c "test -f /var/www/html/vendor/bin/phpunit && echo OK || echo MISSING"
+docker compose exec app php artisan | grep -E '^\s+test\s'
 ```
 
-Tests use `RefreshDatabase` — migrations run automatically per test run.
+If missing, install dev dependencies inside the container:
+
+```bash
+docker compose exec app composer install --no-interaction
+```
+
+> Note: the post-install scripts run `php artisan key:generate`, which mutates `APP_KEY` in your mounted `.env.local`. Stash the current key beforehand if you have encrypted data, sessions, or signed URLs that depend on a stable value.
+
+For a permanent fix, ensure the published image bakes dev deps (`Dockerfile.core` runs `composer install --no-scripts` — drop `--no-dev` if you need `artisan test` out of the box).
+
+### Test suite layout
+
+`phpunit.xml` (in the image at `/var/www/html/phpunit.xml`) defines two suites:
+
+| Suite | Directory | Contents |
+|---|---|---|
+| `Core` | `./tests` | Tests baked into the image — exercise core models, services, and a small set of feature tests. |
+| `Domain` | `./domain/tests` | Tests loaded from the mounted `${DOMAIN_PATH}` (e.g. `../fablabos/tests/`). |
+
+Domain tests typically extend base classes from `Tests\Feature\...` in core. If you see `Class not found` errors for a `Tests\...` class, the domain repo is likely importing a stale namespace path that was renamed in core.
+
+### First-time test database setup
+
+The test database name comes from `DB_DATABASE_TEST` in `.env.local` (mounted as the container's `.env`). It is **not** automatically derived from `DB_DATABASE` + `_test` — both keys must be set explicitly and the test DB must exist.
+
+1. Confirm `.env.local` has matching values:
+
+   ```bash
+   DB_DATABASE=dash_dev_db
+   DB_DATABASE_TEST=dash_dev_db_test
+   ```
+
+2. Create the test database (using the same values from your `.env.local`):
+
+   ```bash
+   docker compose exec pgsql psql -U "$DB_USERNAME" -d "$DB_DATABASE" -c "CREATE DATABASE ${DB_DATABASE}_test OWNER $DB_USERNAME;"
+   ```
+
+Tests use `RefreshDatabase` — migrations run automatically per test run, so you do not need to migrate the test DB manually.
 
 ### Running tests
 
 ```bash
-# All tests
+# All tests (both suites)
 docker compose exec app php artisan test
 
 # Filter by class or method
@@ -534,9 +595,33 @@ docker compose exec app php artisan test --filter TenantAuthorizationTest
 # By suite
 docker compose exec app php artisan test --testsuite Core
 docker compose exec app php artisan test --testsuite Domain
+
+# Single file
+docker compose exec app php artisan test tests/Unit/UuidV7Test.php
+
+# Direct phpunit (bypass Laravel's wrapper)
+docker compose exec app vendor/bin/phpunit --testsuite Core
 ```
 
 > `security_opt: seccomp:unconfined` must be set on the `app` service (already configured) — otherwise `php artisan test` fails with `proc_open(): posix_spawn() failed`.
+
+### Testing troubleshooting
+
+#### `php artisan test` shows artisan help instead of running tests
+
+The `test` command is provided by `nunomaduro/collision` (a dev dep). The image was built or installed with `--no-dev`. Fix by re-running `composer install` without `--no-dev` (see Prerequisites above).
+
+#### `database "<name>_test" does not exist`
+
+Either the test database was never created, or `DB_DATABASE_TEST` in `.env.local` points to a name that does not exist on the Postgres container. Verify both, then create the database with the `psql ... CREATE DATABASE` command above.
+
+#### `Class "Tests\Feature\…" not found` when running the Domain suite
+
+A domain test extends a core base class via `use Tests\Feature\X\Y` — but the path has been renamed in core (for example `Tests\Feature\API\Auth\...` → `Tests\Feature\DASH\Auth\...`). Update the import in the domain test, and move the domain test file to mirror the new path so the namespace matches PSR-4.
+
+#### `Class "Domain\Database\Factories\…" not found`
+
+Core models call `factory()` expecting a factory in the domain layer that is not present. Either add the missing factory to the domain repo, or skip the affected test until the domain catches up.
 
 ## Customization
 
