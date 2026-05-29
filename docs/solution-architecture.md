@@ -302,7 +302,7 @@ When core code changes, update the Docker image consumed by `dash-backend-docker
 For a local rebuild from `dash-backend`:
 
 ```bash
-docker build -f docker/php8.2/Dockerfile.core -t local/dash-backend-core:latest .
+docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest .
 ```
 
 For release flow, `dash-backend-docker/README.md` documents the CI-oriented publish path using `docker-publish-core.sh`.
