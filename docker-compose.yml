@@ -1,6 +1,6 @@
 services:
   app:
-    image: "${DASH_IMAGE:-farandal/dash-backend:1.0.0-core}"
+    image: "${DASH_IMAGE:-local/dash-backend-core:latest}"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_app"
     user: "0:0"
     security_opt:
@@ -23,10 +23,13 @@ services:
       - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env.production"
       - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/html/domain:delegated"
       - "dash-composer-cache:/.composer"
+      - ./reports:/var/www/html/reports
     networks:
       - dash
     depends_on:
       pgsql:
+        condition: service_healthy
+      pgsql_setup:
         condition: service_healthy
       redis:
         condition: service_started
@@ -39,16 +42,50 @@ services:
     environment:
       PGPASSWORD: "${DB_PASSWORD:-secret}"
       POSTGRES_DB: "${DB_DATABASE:-dash}"
+      POSTGRES_DB_TEST: "${DB_DATABASE_TEST:-dash_test}"
       POSTGRES_USER: "${DB_USERNAME:-sail}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
     volumes:
       - "dash-pgsql:/var/lib/postgresql/data"
+      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
     healthcheck:
       test: ["CMD", "pg_isready", "-q", "-d", "${DB_DATABASE:-dash}", "-U", "${DB_USERNAME:-sail}"]
       retries: 3
       timeout: 5s
+
+  pgsql_setup:
+    image: "postgres:17-alpine"
+    container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql_setup"
+    depends_on:
+      pgsql:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: "${DB_PASSWORD:-secret}"
+      POSTGRES_HOST: "pgsql"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${DB_DATABASE:-dash}"
+      POSTGRES_DB_TEST: "${DB_DATABASE_TEST:-dash_test}"
+      POSTGRES_USER: "${DB_USERNAME:-sail}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - /docker-entrypoint-initdb.d/10-create-testing-db.sh && tail -f /dev/null
+    volumes:
+      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
+    networks:
+      - dash
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "psql -h $$POSTGRES_HOST -p $$POSTGRES_PORT -U $$POSTGRES_USER -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = '$$POSTGRES_DB'\" | grep -q 1 && ( [ -z \"$$POSTGRES_DB_TEST\" ] || psql -h $$POSTGRES_HOST -p $$POSTGRES_PORT -U $$POSTGRES_USER -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = '$$POSTGRES_DB_TEST'\" | grep -q 1 )",
+        ]
+      retries: 10
+      timeout: 5s
+    restart: unless-stopped
 
   redis:
     image: "redis:alpine"
