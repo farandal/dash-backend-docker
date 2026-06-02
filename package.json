@@ -4,6 +4,10 @@
   "description": "This folder runs KitchnTabs backend using the Docker Hub image instead of building `dash-backend` locally.",
   "main": "index.js",
   "scripts": {
+    "dash:start": "node ./scripts/run-local.mjs",
+    "dash:start:local": "node ./scripts/run-local.mjs local",
+    "dash:start:production": "node ./scripts/run-local.mjs production",
+    "dash:start:env": "node ./scripts/run-local.mjs",
     "cloudflare:tunnel": "node ./scripts/cloudflare-tunnel.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

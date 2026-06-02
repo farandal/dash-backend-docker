@@ -2,6 +2,47 @@
 
 ## Quick commands:
 
+- pnpm dash:start
+
+## Dash backend core (private repo)
+
+- docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest .
+
+
+### Local startup scripts (Windows + macOS)
+
+Preferred (pnpm orchestrates OS-specific launcher):
+- `pnpm dash:start` (defaults to `.env.local`)
+- `pnpm dash:start:production` (uses `.env.production`)
+- `pnpm dash:start:env -- staging` (uses `.env.staging`)
+
+- Windows (default `.env.local`):
+  - `.\scripts\run-local.bat`
+  - or `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local.ps1 -Environment local`
+
+- Windows with specific env file suffix (uses `.env.{environment}`):
+  - `.\scripts\run-local.bat production` (uses `.env.production`)
+
+- macOS (default `.env.local`):
+  - `chmod +x ./scripts/run-local-mac.sh` (run once)
+  - `bash ./scripts/run-local-mac.sh`
+
+- macOS with specific env file suffix:
+  - `bash ./scripts/run-local-mac.sh production` (uses `.env.production`)
+
+Both scripts run the same startup flow:
+- `docker compose down -v`
+- `docker compose up -d`
+- `docker compose exec app php artisan migrate`
+- Open separate terminal windows for:
+  - `docker compose exec app php artisan reverb:start`
+  - `docker compose exec app php artisan horizon`
+  - `docker compose exec app tail -f /var/www/html/storage/logs/laravel.log`
+  - `docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi`
+
+
+## Dash backend docker useful commands (public container)
+
 - docker compose down -v
 - docker compose up -d
 
@@ -15,7 +56,7 @@
 
 - docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
 
-- docker build -f docker/php8.2/Dockerfile.core -t local/dash-backend-core:latest .
+- docker compose exec app tail -f /var/www/html/storage/logs/laravel.log
 
 # Overview
 This folder runs the Dash backend using a pre-built Docker Hub image instead of building `dash-backend` locally.

@@ -9,7 +9,7 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${DBI_APP_PORT:-18000}:80"
-      - "${DBI_REVERB_SERVER_PORT:-16001}:6001"
+      - "${DBI_REVERB_SERVER_PORT:-25001}:${REVERB_SERVER_PORT:-25001}"
     environment:
       WWWUSER: "${WWWUSER:-1000}"
       LARAVEL_SAIL: 1
@@ -24,6 +24,10 @@ services:
       - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/html/domain:delegated"
       - "dash-composer-cache:/.composer"
       - ./reports:/var/www/html/reports
+      # Mount patched files from dash-backend so fixes survive container recreation
+      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/html/config/broadcasting.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/resources/views/websocket-test.blade.php:/var/www/html/resources/views/websocket-test.blade.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/app/AppNotifications/AppNotificationBuilder.php:/var/www/html/app/AppNotifications/AppNotificationBuilder.php:ro"
     networks:
       - dash
     depends_on:
