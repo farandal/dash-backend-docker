@@ -1,5 +1,24 @@
 CF.md
+
+# Environment configuration — keep only example/sample files
 *.env
 .env.*
+env.*
 !.env.example
 !.env.local.example
+!env.local.example
+
+# Generated documentation and test reports
+/docs/api-docs/
+/reports/
+!reports/.gitkeep
+
+# Host-mounted app storage (assets, logs, cache, sessions) — runtime data, not source
+/storage/
+
+# Dependencies
+/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
