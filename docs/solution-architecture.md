@@ -9,7 +9,7 @@ This document explains how the Dash solution is structured across the core backe
 ```mermaid
 flowchart LR
 	A[dash-backend<br/>Reusable Laravel core] --> B[Built core Docker image]
-	C[fablabos or other domain<br/>Mounted domain code] --> D[Mounted into /var/www/html/domain]
+	C[kitchntabs-backend-domain<br/>Mounted domain code] --> D[Mounted into /var/www/html/domain]
 	B --> E[dash-backend-docker<br/>Runtime project]
 	D --> E
 	E --> F[PostgreSQL]
@@ -21,7 +21,7 @@ flowchart LR
 There are three major layers:
 
 - `dash-backend`: the reusable Laravel core.
-- `fablabos` or another sibling repository: the mounted domain implementation.
+- `kitchntabs-backend-domain` (or another sibling domain repository): the mounted domain implementation.
 - `dash-backend-docker`: the runtime composition project that runs a built core image and mounts the selected domain folder.
 
 ## Workspace Responsibilities
@@ -29,6 +29,8 @@ There are three major layers:
 ## 1. Core Layer: `dash-backend`
 
 The core contains all platform-level logic that should be reused across multiple domains.
+
+For permissions, the core owns the system catalog and seeder machinery. Domain-owned permissions live in the mounted domain repository, including the domain catalog plus one role default file per role, and are seeded by domain-layer seeders that the core `DatabaseSeeder` auto-discovers.
 
 Core ownership includes:
 
@@ -44,7 +46,7 @@ Core ownership includes:
 
 The core must remain domain-agnostic. It can expose extension points to the domain, but it should not require one specific domain's business entities in order to work.
 
-## 2. Domain Layer: `fablabos`
+## 2. Domain Layer: `kitchntabs-backend-domain`
 
 The domain contains client- or vertical-specific logic.
 
@@ -60,8 +62,9 @@ The domain is mounted into the running container at `/var/www/html/domain` and l
 
 In this workspace:
 
-- `fablabos` is the current domain.
-- `kitchntabs-domain` is a reference domain that contains ecommerce features such as products and categories.
+- `kitchntabs-backend-domain` is the current domain — it contains the ecommerce features such as products and categories.
+- Domain-owned permissions live here in `database/data/permissions.json` and the per-role defaults live under `database/data/rolePermissions/`.
+- They are seeded by `Domain\\Database\\Seeders\\Extended\\PermissionSeeder` and `Domain\\Database\\Seeders\\Extended\\RoleSeeder`.
 
 Important architectural rule:
 
@@ -373,9 +376,9 @@ That is why optional integrations should be handled through:
 
 Based on the current workspace history:
 
-- keep `fablabos` focused on its actual domain
+- keep `kitchntabs-backend-domain` focused on its ecommerce domain (products, categories, logistics)
 - keep the core focused on universal platform services
-- move ecommerce-heavy product/category logic toward `kitchntabs-domain`, where that business model actually belongs
+- keep ecommerce-heavy product/category logic in the domain, not the core, where that business model actually belongs
 
 This reduces accidental coupling and keeps the Core suite honest.
 

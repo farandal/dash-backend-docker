@@ -1,112 +1,73 @@
-# DASH Development Setup
+# dash-backend-docker
 
-This guide helps you build and launch the local DASH backend stack.
-
-> **New here?** Start with [QUICK_SETUP.md](./QUICK_SETUP.md) for the condensed, up-to-date flow.
+> **New here?** See [QUICK_SETUP.md](./QUICK_SETUP.md) for the condensed, current flow.
 >
-> **Dev vs Production:** this project runs the **sail core** lineage (`docker/php8.3/Dockerfile.core`,
-> `php -S`, app at `/var/www/html`, domain *mounted* live). Production is a **separate** lineage
-> (`dash-backend/Dockerfile.core.production`, nginx + php-fpm, `/var/www/dash`, domain *baked* via
-> `Dockerfile.kitchntabs.production` → ECR). Use `*-core`/`local:latest` images here, never `*-prod`.
+> **Dev vs Production:** this project runs the **sail core** lineage (`docker/php8.3/Dockerfile.core`, `php -S`,
+> `/var/www/html`, domain *mounted*). Production is separate (`Dockerfile.core.production`, nginx+php-fpm,
+> `/var/www/dash`, domain *baked* → ECR). Use `*-core`/`local:latest` here, never `*-prod`.
+>
+> **First run:** after `docker compose up`, run `docker compose exec app composer update --no-interaction` to pull
+> the mounted domain's packages (notably `box/spout`, which is not in the core lock) into the container.
 
----
+## Quick commands:
 
-## 🚀 Quick Setup
+- pnpm dash:start
+- pnpm docs:generate      # generate API docs from core + domain routes
+- pnpm docs:start         # generate docs and start the local docs UI
 
-### 1. Build the local Core Docker image
-First, switch to your core repository and build the base image:
-```bash
-cd ../dash-backend
-docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
-```
+## Dash backend core (private repo)
 
-### 2. Configure credentials & environment
-Before running, verify your configurations in the `dash-backend-docker` directory:
-1. Make sure you have a `.env.local` file (copied from `.env.local.example`).
-2. **CRITICAL:** Your database credentials in `.env` (Compose) and `.env.local` (Laravel app env) **must match exactly**:
-   - `DB_DATABASE` (e.g. `kt_dev_db` / `dash_dev_db`)
-   - `DB_DATABASE_TEST`
-   - `DB_USERNAME`
-   - `DB_PASSWORD`
+- docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest .
 
----
 
-## ⚡ Running the Stack
+### Local startup scripts (Windows + macOS)
 
-Preferred method (using `pnpm` to orchestrate OS-specific launchers):
-```bash
-# macOS / Linux (runs ./scripts/run-local-mac.sh)
-pnpm dash:start
+Preferred (pnpm orchestrates OS-specific launcher):
+- `pnpm dash:start` (defaults to `.env.local`)
+- `pnpm dash:start:production` (uses `.env.production`)
+- `pnpm dash:start:env -- staging` (uses `.env.staging`)
 
-# Windows
-pnpm dash:start (or .\scripts\run-local.bat)
-```
+- Windows (default `.env.local`):
+  - `.\scripts\run-local.bat`
+  - or `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-local.ps1 -Environment local`
 
-### What the startup script does automatically:
-1. Stops and clears previous volumes: `docker compose down -v`
-2. Starts the containers: `docker compose up -d`
-3. Runs the database migrations: `docker compose exec app php artisan migrate`
-4. Automatically opens separate terminal windows to run:
-   - Websocket Reverb server (`reverb:start`)
-   - Queue worker queue processor (`horizon`)
-   - Active Laravel application log tailing
-   - Auto-run of Core & Domain tests suites
+- Windows with specific env file suffix (uses `.env.{environment}`):
+  - `.\scripts\run-local.bat production` (uses `.env.production`)
 
----
+- macOS (default `.env.local`):
+  - `chmod +x ./scripts/run-local-mac.sh` (run once)
+  - `bash ./scripts/run-local-mac.sh`
 
-## 🛠️ Post-Startup & Verification Commands
+- macOS with specific env file suffix:
+  - `bash ./scripts/run-local-mac.sh production` (uses `.env.production`)
 
-### Install mounted-domain composer packages (first run / after `--force-recreate`)
-The core image ships 5 of the 6 domain packages; **`box/spout`** (used by the logistics export controllers) is
-not in the core lock. Because the domain is mounted (not baked), resolve the merged dependency set inside the
-running container — the core's `composer-merge-plugin` pulls `domain/composer.json` automatically:
-```bash
-docker compose exec app composer update --no-interaction
-```
-> The domain's `endroid/qr-code` is pinned to `^5.0` (its QR helper uses the v5 API and the core ships v5.1.0).
-> Do not bump to `^6.0` — it conflicts with the core and breaks QR generation.
+Both scripts run the same startup flow:
+- `docker compose down -v`
+- `docker compose up -d`
+- `docker compose exec app php artisan migrate`
+- Open separate terminal windows for:
+  - `docker compose exec app php artisan reverb:start`
+  - `docker compose exec app php artisan horizon`
+  - `docker compose exec app tail -f /var/www/html/storage/logs/laravel.log`
+  - `docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi`
 
-### Seeding (First-time setup)
-The default startup runs migrations but does not populate tables. To seed your database with default system admins, tenants, and roles:
-```bash
-docker compose exec app php artisan migrate:fresh --seed
-```
 
-### Generate JWT App Keys / Secrets (If missing)
-```bash
-docker compose exec app php artisan key:generate
-```
+## Dash backend docker useful commands (public container)
 
-### Regenerate Media Library Assets
-```bash
-docker compose exec app php artisan media-library:regenerate
-```
+- docker compose down -v
+- docker compose up -d
 
----
+- docker compose exec app php artisan migrate:fresh --seed  
 
-## 🌐 Verifying Access & Output
+- docker compose exec app php artisan reverb:start --debug
+- docker compose exec app php artisan horizon  
 
-- **Test Suite Results:** In the spawned terminal windows, you should see the test suite logs, or you can find the raw reports here:
-  - `dash-backend-docker/reports/core_results.xml`
-  - `dash-backend-docker/reports/domain_results.xml`
-- **Application URL:** Browse to the port defined in your `.env` file under `APP_PORT` (typically `25000`):
-  - Web Server: [http://localhost:25000](http://localhost:25000)
-- **Websockets Check:** Test the websocket connection page to verify Reverb is working:
-  - WebSocket Diagnostics: [http://localhost:25000/ws](http://localhost:25000/ws)
+- docker compose exec app php artisan test --testsuite Core
+- docker compose exec app php artisan test --testsuite Domain
 
----
+- docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
 
-## 💡 Quick Reference Commands
-
-| Action | Command |
-|---|---|
-| **Stop Stack (preserve data)** | `docker compose down` |
-| **Stop & Clear Database** | `docker compose down -v` |
-| **Check logs** | `docker compose logs -f app` |
-| **Clear runtime cache** | `docker compose exec app php artisan optimize:clear` |
-| **Interactive tinker shell** | `docker compose exec app php artisan tinker` |
-| **Run Core unit tests** | `docker compose exec app php artisan test --testsuite Core` |
-| **Run Domain unit tests** | `docker compose exec app php artisan test --testsuite Domain` |
+- docker compose exec app tail -f /var/www/html/storage/logs/laravel.log
 
 # Overview
 This folder runs the Dash backend using a pre-built Docker Hub image instead of building `dash-backend` locally.
@@ -768,3 +729,13 @@ docker compose exec app composer dump-autoload
 curl -I http://localhost:${DBI_APP_PORT:-25000}
 curl -I http://localhost:${DBI_FORWARD_MAILHOG_DASHBOARD_PORT:-25026}
 ```
+
+# Publishing packages in npmjs registry when building the docker core image.
+
+
+pnpm dash:build:core
+
+If you want to rebuild the Docker image without republishing packages (e.g. during iteration):
+
+
+pnpm dash:build:core:skip-publish
