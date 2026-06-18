@@ -29,7 +29,7 @@ The core owns platform-level concerns that must remain stable across all domains
 - Public APIs and administration APIs that domains can reuse.
 - Shared migrations and base data seeders.
 
-The core must not become the home for client-only business entities. In this workspace, currencies, tenancies, subscriptions, and payments belong to the core, while product/catalog/ecommerce features belong to a domain such as `kitchntabs-domain`, not to `fablabos` unless that domain truly uses them.
+The core must not become the home for client-only business entities. In this workspace, currencies, tenancies, subscriptions, and payments belong to the core, while product/catalog/ecommerce features belong to the domain (`kitchntabs-backend-domain`), not to the generic core.
 
 ## Feature Map
 
@@ -80,6 +80,10 @@ How domains use it:
 - Reuse the core roles and policies first.
 - Add domain policies only when the protected resource is domain-owned.
 - Avoid redefining platform roles in the domain unless the domain is adding a truly new permission surface.
+- Keep domain-specific permission catalogs in the domain repository.
+- Keep domain-specific permission catalogs in the domain repository.
+- Mirror the core role-permission layout with one JSON file per role under `database/data/rolePermissions/`.
+- Seed both the catalog and the role defaults through domain-layer seeders discovered by the core `DatabaseSeeder`.
 
 ## Tenancy Management
 
@@ -371,7 +375,7 @@ When evaluating where a new feature belongs, use this rule:
 - If more than one domain should depend on it, put it in the core.
 - If it is specific to one client or vertical, keep it in the domain.
 
-In this workspace, ecommerce entities such as products and categories are a domain concern and belong in `kitchntabs-domain`, not in the generic core and not in `fablabos` unless that domain explicitly requires them.
+In this workspace, ecommerce entities such as products and categories are a domain concern and belong in the domain (`kitchntabs-backend-domain`), not in the generic core.
 
 ## Core Test Suite
 
@@ -424,7 +428,7 @@ Interpretation:
 
 - Keep currencies, tenancies, subscriptions, and payments in the core.
 - Keep optional domain-only business models out of the core dependency chain.
-- Refactor product and category logic toward `kitchntabs-domain`, where that business capability actually belongs.
+- Keep product and category logic in `kitchntabs-backend-domain`, where that business capability actually belongs.
 - Do not add new domain requirements to core tests unless the feature is genuinely core-owned.
 - Prefer extension over duplication: a domain should wrap or compose core functionality instead of copying it.
 

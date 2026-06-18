@@ -22,12 +22,30 @@ services:
       - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env"
       - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env.production"
       - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/html/domain:delegated"
+      # Dev storage on the host so assets, logs, cache & sessions live on local disk
+      # (not baked inside the image). Folder is named after the domain project.
+      - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/html/storage:delegated"
       - "dash-composer-cache:/.composer"
       - ./reports:/var/www/html/reports
-      # Mount patched files from dash-backend so fixes survive container recreation
-      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/html/config/broadcasting.php:ro"
-      - "${BACKEND_PATH:-../dash-backend}/resources/views/websocket-test.blade.php:/var/www/html/resources/views/websocket-test.blade.php:ro"
-      - "${BACKEND_PATH:-../dash-backend}/app/AppNotifications/AppNotificationBuilder.php:/var/www/html/app/AppNotifications/AppNotificationBuilder.php:ro"
+      # config/ is NOT mounted whole below, so keep this individual patched-file mount.
+      - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/html/config/firebase.php:ro"
+      #
+      # --- Optional: mount dash-backend CORE SOURCE for local development ----------
+      # Edit core source on the host (../dash-backend) and changes apply live in the
+      # container — no image rebuild or `docker cp` needed. Read-write so artisan
+      # generators and bootstrap/cache work. Comment out this whole block to run
+      # purely from the baked image. NOTE: vendor/ and config/ deliberately stay
+      # baked (config/firebase.php is patched above); these supersede any per-file
+      # core mounts (e.g. routes/system.php, the SystemPaymentGateway feature files).
+      - "${BACKEND_PATH:-../dash-backend}/app:/var/www/html/app:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/html/bootstrap:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/html/database:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/html/lang:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/public:/var/www/html/public:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/html/resources:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/html/routes:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/html/tests:delegated"
+      # ----------------------------------------------------------------------------
     networks:
       - dash
     depends_on:
@@ -38,8 +56,21 @@ services:
       redis:
         condition: service_started
 
+  api_docs:
+    image: nginx:alpine
+    container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_api_docs"
+    restart: unless-stopped
+    ports:
+      - "${DBI_API_DOCS_PORT:-18010}:80"
+    volumes:
+      - "./docs/api-docs:/usr/share/nginx/html:ro"
+    depends_on:
+      - app
+    networks:
+      - dash
+
   pgsql:
-    image: "postgres:17-alpine"
+    image: "postgres:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql"
     ports:
       - "${DBI_FORWARD_DB_PORT:-15432}:5432"
@@ -50,7 +81,7 @@ services:
       POSTGRES_USER: "${DB_USERNAME:-sail}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
     volumes:
-      - "dash-pgsql:/var/lib/postgresql/data"
+      - "dash-pgsql:/var/lib/postgresql"
       - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
@@ -60,7 +91,7 @@ services:
       timeout: 5s
 
   pgsql_setup:
-    image: "postgres:17-alpine"
+    image: "postgres:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql_setup"
     depends_on:
       pgsql:
