@@ -80,4 +80,9 @@ sleep "$WINDOW_DELAY_SECONDS"
 echo "[7/7] Opening tests terminal window (Core+Domain)"
 open_terminal_window "dash-backend-docker | Tests" "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/html/reports/test_results.xml --no-ansi"
 
+if [[ "$ENVIRONMENT" == "tunnel" ]]; then
+  echo "[8/8] Opening Cloudflare tunnel terminal window"
+  open_terminal_window "dash-backend-docker | Cloudflare Tunnel" "pnpm cloudflare:tunnel"
+fi
+
 echo "Done. Reverb, Horizon, log tail, and tests are running in separate Terminal windows. Tests run in a single Core+Domain command."

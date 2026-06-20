@@ -76,4 +76,9 @@ Start-Sleep -Seconds $WindowDelaySeconds
 Write-Host "[7/7] Opening tests terminal window (Core+Domain)"
 Open-CommandWindow -Title "dash-backend-docker | Tests" -Command "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/html/reports/test_results.xml --no-ansi"
 
+if ($Environment -eq "tunnel") {
+    Write-Host "[8/8] Opening Cloudflare tunnel terminal window"
+    Open-CommandWindow -Title "dash-backend-docker | Cloudflare Tunnel" -Command "pnpm cloudflare:tunnel"
+}
+
 Write-Host "Done. Reverb, Horizon, log tail, and tests are running in separate terminal windows. Tests run in a single Core+Domain command."

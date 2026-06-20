@@ -27,8 +27,9 @@ services:
       - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/html/storage:delegated"
       - "dash-composer-cache:/.composer"
       - ./reports:/var/www/html/reports
-      # config/ is NOT mounted whole below, so keep this individual patched-file mount.
+      # config/ is NOT mounted whole below, so keep these individual patched-file mounts.
       - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/html/config/firebase.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/html/config/broadcasting.php:ro"
       #
       # --- Optional: mount dash-backend CORE SOURCE for local development ----------
       # Edit core source on the host (../dash-backend) and changes apply live in the

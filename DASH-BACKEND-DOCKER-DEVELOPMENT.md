@@ -25,6 +25,7 @@
 Preferred (pnpm orchestrates OS-specific launcher):
 - `pnpm dash:start` (defaults to `.env.local`)
 - `pnpm dash:start:production` (uses `.env.production`)
+- `pnpm dash:start:tunnel` (uses `.env.tunnel`, also opens a Cloudflare tunnel terminal window — see [Cloudflare tunnel](#cloudflare-tunnel) below)
 - `pnpm dash:start:env -- staging` (uses `.env.staging`)
 
 - Windows (default `.env.local`):
@@ -574,12 +575,81 @@ pnpm install
 pnpm cloudflare:tunnel
 ```
 
-Notes:
+Notes (single-hostname / legacy mode):
 - Uses `APP_PORT` from `.env`.
 - Uses `CF_TUNNEL_HOSTNAME` for the public domain; falls back to a temporary `trycloudflare.com` URL if not set.
 - Set `CF_TUNNEL_TOKEN_FILE` or `CF_TUNNEL_TOKEN` for a named Cloudflare tunnel.
 - Optional DNS automation: set `CF_API_TOKEN` + `CF_ZONE_ID` (or `CF_ZONE_NAME`) to auto-create/update the CNAME.
 - QUIC fallback: if named tunnel hits repeated QUIC dial timeouts, it auto-falls back to `trycloudflare.com`. Tune with `CF_QUIC_ERROR_FALLBACK_ENABLED`, `CF_QUIC_ERROR_FALLBACK_COUNT`, `CF_QUIC_ERROR_FALLBACK_WINDOW_SEC`.
+
+### Multi-hostname tunnel (api-dev / ws-dev)
+
+One named Cloudflare tunnel can serve several public hostnames at once — used here to expose the API and the
+Reverb websocket from the same `dash-backend-docker` stack as `api-dev.kitchntabs.com` and
+`ws-dev.kitchntabs.com`. `web-dev.kitchntabs.com` / `system-dev.kitchntabs.com` slots exist for the frontend and
+are reserved for later (left blank until the frontend is wired up).
+
+Multi-route mode activates automatically as soon as any `CF_TUNNEL_HOSTNAME_<SLOT>` below is non-empty; the
+legacy single-hostname flow above is unaffected when those vars are blank. It always requires a named tunnel
+(no `trycloudflare.com` fallback — a quick tunnel can't carry more than one hostname).
+
+**One-time setup (Cloudflare dashboard):**
+
+1. Create an API token under **My Profile → API Tokens** with:
+   - **Account → Cloudflare Tunnel → Edit** (lets the script create the tunnel, fetch its token, and push
+     ingress rules for the hostnames below)
+   - **Zone → DNS → Edit**, scoped to the `kitchntabs.com` zone (lets the script create the CNAME records)
+2. Find your **Account ID** in the Cloudflare dashboard sidebar (Account Home).
+
+That's it — no need to manually create a tunnel or copy a connector token from Zero Trust. As long as
+`CF_TUNNEL_TOKEN` / `CF_TUNNEL_TOKEN_FILE` are blank, the script creates a named tunnel via the Cloudflare API on
+first run (named after `CF_TUNNEL_NAME`, default `dash-dev`; re-runs look it up by name instead of duplicating
+it), fetches its connector token, and saves it back into `.env` as `CF_TUNNEL_TOKEN` for you.
+
+**Required env vars** (already templated in `.env` / `.env.example`, fill in the secrets yourself — never commit
+real tokens):
+
+```bash
+# dash-backend-docker/.env
+CF_API_TOKEN=<your api token>
+CF_ACCOUNT_ID=<your account id>
+CF_ZONE_NAME=kitchntabs.com
+CF_TUNNEL_NAME=dash-dev                       # tunnel is auto-created/looked-up by this name
+# CF_TUNNEL_TOKEN is filled in automatically after the first run — leave blank initially
+
+CF_TUNNEL_HOSTNAME_API=api-dev.kitchntabs.com
+CF_TUNNEL_LOCAL_API=http://localhost:25000
+
+CF_TUNNEL_HOSTNAME_WS=ws-dev.kitchntabs.com
+CF_TUNNEL_LOCAL_WS=http://localhost:25001
+```
+
+**Run it:**
+
+```bash
+pnpm dash:start:tunnel
+# or, if the stack is already running and you only need the tunnel itself:
+pnpm cloudflare:tunnel
+```
+
+`pnpm dash:start:tunnel` uses `.env.tunnel` as the mounted Laravel app env (already configured with
+`APP_URL=https://api-dev.kitchntabs.com`, `REVERB_HOST=ws-dev.kitchntabs.com`, `REVERB_PORT=443`,
+`REVERB_SCHEME=https`, and `SANCTUM_STATEFUL_DOMAINS` covering all four `*-dev.kitchntabs.com` hostnames) and
+opens an extra terminal window running `pnpm cloudflare:tunnel`, alongside the usual Reverb/Horizon/logs/tests
+windows.
+
+What the script does in multi-route mode:
+- If `CF_TUNNEL_TOKEN`/`CF_TUNNEL_TOKEN_FILE` are blank, creates the named tunnel (or finds the existing one by
+  `CF_TUNNEL_NAME`) via `POST /accounts/{account}/cfd_tunnel`, fetches its connector token via
+  `GET .../cfd_tunnel/{id}/token`, and writes that token back into `.env` as `CF_TUNNEL_TOKEN`.
+- Pushes an ingress config to Cloudflare (`api-dev` → `CF_TUNNEL_LOCAL_API`, `ws-dev` → `CF_TUNNEL_LOCAL_WS`, plus
+  a `http_status:404` catch-all) via the Cloudflare API — this is what makes one tunnel answer multiple hostnames.
+- Creates/updates a proxied CNAME per hostname pointing at `<tunnel-id>.cfargotunnel.com`.
+- Runs `cloudflared tunnel run --token-file ...` **without** `--url`, so `cloudflared` pulls the ingress rules
+  just pushed instead of forcing a single catch-all target.
+
+No code changes needed for `*.kitchntabs.com` — `dash-backend/config/cors.php` already allows all subdomains via
+an `allowed_origins_patterns` regex, and `dash-backend/config/reverb.php` already allows `'*'` origins.
 
 ## Testing
 

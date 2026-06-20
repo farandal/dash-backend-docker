@@ -7,6 +7,7 @@
     "dash:start": "node ./scripts/run-local.mjs",
     "dash:start:local": "node ./scripts/run-local.mjs local",
     "dash:start:production": "node ./scripts/run-local.mjs production",
+    "dash:start:tunnel": "node ./scripts/run-local.mjs tunnel",
     "dash:start:env": "node ./scripts/run-local.mjs",
     "docs:generate": "node ./scripts/generate-api-docs.js",
     "docs:start": "pnpm docs:generate && docker compose up -d api_docs",
