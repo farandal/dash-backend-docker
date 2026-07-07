@@ -1,155 +1,198 @@
-# Quick Setup — Local Dev (core image + mounted domain)
+# Quick Setup — Local Dev (multi-domain)
 
-Run the DASH backend locally using the **sail core image** with your **domain mounted live** for editing.
-This is the local-development lineage and is fully separate from production (see "Dev vs Production" below).
+Run the DASH backend locally. The stack supports three independent domains; pick the one
+you're working on and run the matching pnpm command.
 
-> TL;DR
-> ```bash
-> # 1. build the local core (in dash-backend)
-> cd ../dash-backend
-> docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
->
-> # 2. start the stack (in dash-backend-docker)
-> cd ../dash-backend-docker
-> docker compose up -d
->
-> # 3. pull the mounted domain's composer packages into the container (e.g. box/spout)
-> docker compose exec app composer update --no-interaction
->
-> # 4. migrate + seed
-> docker compose exec app php artisan migrate:fresh --seed
->
-> # 5. start realtime workers (separate terminals)
-> docker compose exec app php artisan horizon
-> docker compose exec app php artisan reverb:start --debug
-> ```
-> API → http://localhost:25000 · WS test → http://localhost:25000/ws · Mailhog → http://localhost:25026
+> **Full reference:** [README.md](./README.md) · **Dev cheatsheet:** [DASH-BACKEND-DOCKER-DEVELOPMENT.md](./DASH-BACKEND-DOCKER-DEVELOPMENT.md)
+
+---
+
+## TL;DR
+
+```bash
+# 1. Build the local core image (in dash-backend, once or after source changes)
+cd ../dash-backend
+docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
+
+# 2. Start the stack for your domain (in dash-backend-docker)
+cd ../dash-backend-docker
+pnpm dash:kitchntabs:local    # or:  pnpm dash:fablabos:local  /  pnpm dash:reddorada:local
+
+# 3. Install mounted domain packages (first run / after --force-recreate)
+docker compose exec app composer update --no-interaction
+
+# 4. Migrate + seed
+docker compose exec app php artisan migrate:fresh --seed
+
+# 5. Start realtime workers (separate terminals — opened automatically by the launcher)
+docker compose exec app php artisan horizon
+docker compose exec app php artisan reverb:start --debug
+```
+
+API → http://localhost:25000 · WS test → http://localhost:25000/ws · Mailhog → http://localhost:25026
+
+---
+
+## Domains at a glance
+
+| Domain | pnpm command | Compose env | App env | DB |
+|---|---|---|---|---|
+| **kitchntabs** | `pnpm dash:kitchntabs:local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `kt_dev_db` |
+| **fablabos** | `pnpm dash:fablabos:local` | `.env.fablabos` | `.env.fablabos.local` | `fl_dev_db` |
+| **reddorada** | `pnpm dash:reddorada:local` | `.env.reddorada` | `.env.reddorada.local` | `rd_dev_db` |
+
+Each domain uses a **pair** of env files:
+
+- **`.env.<domain>`** — read by Docker Compose (`--env-file`): sets `DOMAIN_PATH`, `STORAGE_PATH`,
+  `DB_*` credentials, ports, and Cloudflare tunnel config.
+- **`.env.<domain>.local`** — mounted as `/var/www/html/.env` inside the container: full Laravel
+  application config.
+- **`.env.<domain>.tunnel`** — tunnel-mode variant of the app env (overrides `APP_URL`,
+  `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME` for public Cloudflare hostnames).
+
+All env files are gitignored. Copy the templates to create yours:
+
+```bash
+cp env.domain.example       .env.kitchntabs
+cp env.domain.local.example .env.kitchntabs.local
+# edit both files — fill in DB credentials, APP_KEY, domain-specific values
+```
 
 ---
 
 ## Prerequisites
 
 - Docker Desktop (or Docker Engine + Compose v2)
-- The three sibling repos checked out next to each other:
-  ```
-  DASH-FRAMEWORK/
-  ├── dash-backend/                 # Laravel core (source + sail Dockerfile)
-  ├── kitchntabs-backend-domain/    # the domain (mounted live)
-  └── dash-backend-docker/          # this runtime project
-  ```
+- Sibling repos checked out next to each other:
+
+```
+DASH-FRAMEWORK/
+├── dash-backend/                    # Laravel core source + sail Dockerfile
+├── dash-backend-docker/             # this project
+├── kitchntabs-backend-domain/       # KitchnTabs domain (optional)
+├── fablabos-backend-domain/         # Fablabos domain (optional)
+└── reddorada-backend-domain/        # Reddorada domain (optional)
+```
 
 ---
 
 ## Step 1 — Build the local core image
 
-The local image is the **sail** core (`php -S` dev server, app at `/var/www/html`, EXPOSE 8000).
-`OBFUSCATE_APP=false` keeps the source readable for debugging.
+The local image uses the sail Dockerfile (`php -S`, app at `/var/www/html`).
+`OBFUSCATE_APP=false` keeps source readable for debugging.
 
 ```bash
 cd ../dash-backend
 docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
 ```
 
-`docker-compose.yml` defaults `DASH_IMAGE` to `local/dash-backend-core:latest`, so you don't need to set it.
-(To run a published image instead, set `DASH_IMAGE=farandal/dash-backend:<tag>-core` in `.env`.)
+`docker-compose.yml` defaults `DASH_IMAGE` to `local/dash-backend-core:latest`, so no
+further config is needed. To run a published image instead, set
+`DASH_IMAGE=farandal/dash-backend:<tag>-core` in `.env.<domain>`.
 
 ---
 
 ## Step 2 — Configure env files
 
-Two files, two consumers — keep the DB credentials identical in both.
+Two files per domain; DB credentials must be identical in both.
 
-**`.env`** (Docker Compose variables):
+**`.env.<domain>`** (Docker Compose level):
+
 ```ini
 COMPOSE_PROJECT_NAME=dash_image
 
-# App-level Laravel env mounted as /var/www/html/.env  (must be a real file on disk)
-ENV_FILE=./.env.local
+# DASH_IMAGE=local/dash-backend-core:latest   # default — uncomment to pin a published tag
 
-# Domain mounted at /var/www/html/domain
-DOMAIN_PATH=../kitchntabs-backend-domain
+ENV_FILE=.env.<domain>.local                  # Laravel app env mounted into the container
+DOMAIN_PATH=../<domain>-backend-domain        # sibling domain repo path
+STORAGE_PATH=./storage/<domain>-backend-domain
 
-# Used to INITIALIZE the postgres container — must match .env.local exactly
-DB_DATABASE=kt_dev_db
-DB_DATABASE_TEST=kt_dev_db_test
-DB_USERNAME=kt
-DB_PASSWORD=kt5663...
+DB_DATABASE=<prefix>_dev_db
+DB_DATABASE_TEST=<prefix>_dev_db_test
+DB_USERNAME=<user>
+DB_PASSWORD=<password>
 
-# Host ports (DBI_ prefix avoids collisions with other stacks)
 DBI_APP_PORT=25000
 DBI_FORWARD_DB_PORT=25432
 DBI_FORWARD_REDIS_PORT=25379
+DBI_REVERB_SERVER_PORT=25001
 DBI_FORWARD_MAILHOG_PORT=25025
 DBI_FORWARD_MAILHOG_DASHBOARD_PORT=25026
-DBI_REVERB_SERVER_PORT=25001
 ```
 
-**`.env.local`** (mounted as the container's `/var/www/html/.env`) — the values that matter for local:
+**`.env.<domain>.local`** (Laravel app level — mounted as `/var/www/html/.env`):
+
 ```ini
 APP_ENV=local
 APP_DEBUG=true
-APP_KEY=base64:...                 # generate once if empty: docker compose exec app php artisan key:generate
+APP_KEY=base64:...           # generate: docker compose exec app php artisan key:generate
+APP_URL=http://localhost:25000
 
 DB_CONNECTION=pgsql
-DB_HOST=pgsql                      # service name, not localhost
+DB_HOST=pgsql                # service name inside the compose network — NOT localhost
 DB_PORT=5432
-DB_DATABASE=kt_dev_db              # MUST match .env
-DB_USERNAME=kt                     # MUST match .env
-DB_PASSWORD=kt5663...              # MUST match .env
-DB_DATABASE_TEST=kt_dev_db_test    # MUST match .env
+DB_DATABASE=<prefix>_dev_db  # MUST match .env.<domain>
+DB_USERNAME=<user>           # MUST match .env.<domain>
+DB_PASSWORD=<password>       # MUST match .env.<domain>
+DB_DATABASE_TEST=<prefix>_dev_db_test
 
 QUEUE_CONNECTION=redis
 BROADCAST_DRIVER=reverb
 REDIS_HOST=redis
-REDIS_CLIENT=predis                # single-node local redis
+REDIS_CLIENT=predis
 REDIS_PASSWORD=null
 
-# Reverb (websockets) — browser connects to ws://localhost:25001
-REVERB_SERVER_HOST=0.0.0.0         # bind inside container
+REVERB_SERVER_HOST=0.0.0.0   # bind inside the container
 REVERB_SERVER_PORT=25001
-REVERB_HOST=localhost              # public host the browser uses (NOT 0.0.0.0)
+REVERB_HOST=localhost          # browser connects to ws://localhost:25001
 REVERB_PORT=25001
 REVERB_SCHEME=http
 REVERB_APP_ID=mock_app
 REVERB_APP_KEY=mock_key
-REVERB_APP_SECRET=...
+REVERB_APP_SECRET=<secret>
 
 MAIL_MAILER=smtp
 MAIL_HOST=mailhog
 MAIL_PORT=1025
 ```
 
-> If `ENV_FILE` points at a path that doesn't exist, the app boots with no env. Verify the file the compose
-> variable references actually exists (`.env.local` here).
+> If `ENV_FILE` points at a file that doesn't exist, the app boots with no env. Verify the
+> file exists before `docker compose up`.
 
 ---
 
 ## Step 3 — Start the stack
 
+The launcher (`scripts/run-local.mjs`) selects `--env-file .env.<domain>` and opens separate
+terminal windows for Reverb, Horizon, log tail, and tests:
+
 ```bash
-docker compose up -d
+pnpm dash:kitchntabs:local
+pnpm dash:fablabos:local
+pnpm dash:reddorada:local
 ```
 
-First boot waits ~30s for the Postgres healthcheck. Services: `app`, `pgsql`, `pgsql_setup` (creates the test DB),
-`redis`, `mailhog`, `api_docs`.
+Or call the script directly for any project/environment combination:
+
+```bash
+node scripts/run-local.mjs kitchntabs local
+node scripts/run-local.mjs fablabos   tunnel
+node scripts/run-local.mjs reddorada  production
+```
+
+On macOS/Linux this delegates to `scripts/run-local-mac.sh <project> <environment>`;
+on Windows it calls `scripts/run-local.ps1`.
 
 ---
 
 ## Step 4 — Install the mounted domain's composer packages
 
-The core image ships 5 of the 6 domain packages already; **`box/spout` is the one it lacks**, and the domain is
-mounted (not baked), so resolve the merged dependency set inside the running container. The core's
-`composer-merge-plugin` automatically merges `domain/composer.json`:
-
 ```bash
 docker compose exec app composer update --no-interaction
 ```
 
-This installs `box/spout` (used by the logistics export controllers) and registers the domain providers. Re-run it
-after any `docker compose up --force-recreate app` (container `vendor/` resets to the image baseline).
-
-> The domain's `endroid/qr-code` is pinned to `^5.0` (the QR helper uses the v5 API and the core ships v5.1.0).
-> Do not bump it to `^6.0` — it conflicts with the core and breaks QR generation.
+Re-run after any `docker compose up --force-recreate app` — the container's `vendor/`
+resets to the image baseline on recreate.
 
 ---
 
@@ -159,15 +202,14 @@ after any `docker compose up --force-recreate app` (container `vendor/` resets t
 docker compose exec app php artisan migrate:fresh --seed
 ```
 
-Seeded accounts come from `.env.local` (`SYSTEM_ADMIN_EMAIL`, `DEFAULT_TENANT_NAME`, etc.). Domain migrations run
-because the domain is mounted at `/var/www/html/domain`.
+Seeded accounts come from the app env file (`SYSTEM_ADMIN_EMAIL`, `DEFAULT_TENANT_NAME`, etc.).
 
 ---
 
-## Step 6 — Run realtime workers
+## Step 6 — Realtime workers
 
-Queues and websocket broadcasts need Horizon + Reverb (broadcast events are queued, so without Horizon the
-websocket test page connects but never receives messages):
+The launcher opens these in separate terminal windows automatically. If you need to restart
+them manually:
 
 ```bash
 docker compose exec app php artisan horizon
@@ -179,48 +221,42 @@ docker compose exec app php artisan reverb:start --debug
 ## Access
 
 - API: http://localhost:25000
-- WebSocket test page: http://localhost:25000/ws
+- WebSocket diagnostics: http://localhost:25000/ws
 - Mailhog UI: http://localhost:25026
 
 ---
 
 ## Tests
 
-The sail core bakes dev deps (PHPUnit, Collision), and the mounted domain includes its `tests/`, so both suites run
-locally:
-
 ```bash
 docker compose exec app php artisan test --testsuite Core
 docker compose exec app php artisan test --testsuite Domain
 ```
 
-The test DB (`kt_dev_db_test`) is created automatically by the `pgsql_setup` service. (Note: the *production* image
-excludes domain tests via the domain `.dockerignore` — that's expected; tests are a local/dev concern.)
+The test DB (`<prefix>_dev_db_test`) is created automatically by the `pgsql_setup` service.
 
 ---
 
-## Dev vs Production (don't cross the streams)
+## Switching between domains
+
+The stack runs **one domain at a time**. To switch:
+
+```bash
+docker compose down -v                      # stop + wipe volumes (data is domain-specific)
+pnpm dash:fablabos:local                   # restart with the new domain env
+docker compose exec app php artisan migrate:fresh --seed
+```
+
+> `-v` is required: each domain has its own DB credentials and data. Without it, the
+> postgres volume keeps the previous domain's data and the new credentials will fail.
+
+---
+
+## Dev vs Production
 
 | | Local dev (this project) | Production |
 |---|---|---|
 | Core Dockerfile | `dash-backend/docker/php8.3/Dockerfile.core` (sail, `php -S`, `/var/www/html`) | `dash-backend/Dockerfile.core.production` (nginx + php-fpm, `/var/www/dash`) |
 | Image tag | `local/...:latest` or `*-core` | `*-prod` |
-| Domain | **mounted** live at `/var/www/html/domain` | **baked** via `Dockerfile.kitchntabs.production` → ECR |
+| Domain | **mounted** live at `/var/www/html/domain` | **baked** → ECR |
 | Run by | `docker compose` here | ECS Fargate |
-
-Shared config (`config/horizon.php`, `config/database.php`) is local-safe: the Horizon `{...}` Redis prefix is a
-harmless literal on single-node Redis, and `sslmode=require` only activates when `PLATFORM=fargate` (never set
-locally). Building or running the local stack never affects the production `-prod` images.
-
----
-
-## Common commands
-
-```bash
-docker compose logs -f app
-docker compose exec app bash
-docker compose exec app php artisan optimize:clear
-docker compose exec app php artisan tinker
-docker compose down            # stop, keep data
-docker compose down -v         # stop, wipe DB/redis volumes
-```

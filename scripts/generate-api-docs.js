@@ -160,6 +160,15 @@ function downloadFile(url, dest) {
 }
 
 async function main() {
+  // `docker compose exec` matches running containers by project label, which
+  // is normally sourced from a literal `.env` (no longer present in this repo)
+  // or an inherited COMPOSE_PROJECT_NAME export. Without either, Compose falls
+  // back to the directory name and reports "service app is not running" even
+  // though the container is up under a different project. Default to the
+  // value baked into docker-compose.yml so standalone `pnpm docs:generate`
+  // still works; an inherited export (e.g. from run-local-mac.sh) wins.
+  process.env.COMPOSE_PROJECT_NAME = process.env.COMPOSE_PROJECT_NAME || "dash_image";
+
   mkdirSync(dirname(OUTPUT_FILE), { recursive: true });
 
   // Ensure local Redoc bundle exists

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 
-const environment = process.argv[2] || process.env.DASH_ENV || "local";
+const project = process.argv[2] || process.env.DASH_PROJECT || "kitchntabs";
+const environment = process.argv[3] || process.env.DASH_ENV || "local";
 const isWindows = process.platform === "win32";
 
 const command = isWindows ? "powershell" : "bash";
@@ -11,12 +12,14 @@ const args = isWindows
       "Bypass",
       "-File",
       "./scripts/run-local.ps1",
+      "-Project",
+      project,
       "-Environment",
       environment,
     ]
-  : ["./scripts/run-local-mac.sh", environment];
+  : ["./scripts/run-local-mac.sh", project, environment];
 
-console.log(`Starting local stack with environment: ${environment}`);
+console.log(`Starting local stack for project: ${project} (environment: ${environment})`);
 console.log(`Launcher platform: ${isWindows ? "windows" : "unix"}`);
 
 const result = spawnSync(command, args, {
