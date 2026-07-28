@@ -3,3 +3,4 @@ CF.md
 .env.*
 !.env.example
 !.env.local.example
+storage/

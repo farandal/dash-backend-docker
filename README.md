@@ -2,12 +2,15 @@
 
 ## Quick commands:
 
-- pnpm dash:start
+- docker compose down -v --remove-orphans  
+- pnpm dash:start kitchntabs.tunnel --tunnel
 
 ## Dash backend core (private repo)
 
-- docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest .
+- cd dash-backend
+- docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .
 
+Note: For local development is important INSTALL_DEV_DEPS=true
 
 ### Local startup scripts (Windows + macOS)
 
@@ -37,8 +40,8 @@ Both scripts run the same startup flow:
 - Open separate terminal windows for:
   - `docker compose exec app php artisan reverb:start`
   - `docker compose exec app php artisan horizon`
-  - `docker compose exec app tail -f /var/www/html/storage/logs/laravel.log`
-  - `docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi`
+  - `docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log`
+  - `docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
 
 
 ## Dash backend docker useful commands (public container)
@@ -54,20 +57,21 @@ Both scripts run the same startup flow:
 - docker compose exec app php artisan test --testsuite Core
 - docker compose exec app php artisan test --testsuite Domain
 
-- docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+- docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
+- docker compose exec app php artisan test --testsuite=Domain --log-junit /var/www/dash/reports/domain_results.xml --no-ansi
 
-- docker compose exec app tail -f /var/www/html/storage/logs/laravel.log
+- docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log
 
 # Overview
 This folder runs the Dash backend using a pre-built Docker Hub image instead of building `dash-backend` locally.
 
 It is pre-configured to use:
-- App env file: `./.env.local` (mounted as `/var/www/html/.env` inside the container)
-- Domain folder: configured via `DOMAIN_PATH` in `.env` (mounted at `/var/www/html/domain`)
+- App env file: `./.env.local` (mounted as `/var/www/dash/.env` inside the container)
+- Domain folder: configured via `DOMAIN_PATH` in `.env` (mounted at `/var/www/dash/domain`)
 - Core image: configured via `DASH_IMAGE` in `.env` (e.g. `farandal/dash-backend:1.0.0-core`)
 
 Image contract (required):
-- The Docker image must already contain the full Laravel application at `/var/www/html`.
+- The Docker image must already contain the full Laravel application at `/var/www/dash`.
 - At minimum, the image must include: `artisan`, `app/`, `bootstrap/`, `config/`, `database/`, `public/`, `routes/`, `storage/`, `vendor/`.
 - This setup does not mount local backend source code — all app code comes from the image.
 - Use the `-core` tagged images (e.g., `farandal/dash-backend:1.0.0-core`, `farandal/dash-backend:latest-core`) built with `docker-publish-core.sh` in the `dash-backend` folder.
@@ -194,14 +198,14 @@ Login Succeeded
 [+] Building 111.2s (25/25) FINISHED  docker-container:dash-backend-core-builder
  => [internal] load build definition from Dockerfile.core                  0.0s
  => [internal] load metadata for docker.io/library/ubuntu:24.04            1.2s
- => CACHED [ 2/18] WORKDIR /var/www/html                                   0.0s
+ => CACHED [ 2/18] WORKDIR /var/www/dash                                   0.0s
  => CACHED [ 3/18] RUN ln -snf /usr/share/zoneinfo/UTC /etc/localtime      0.0s
  => CACHED [ 5/18] RUN rm -f /etc/apt/apt.conf.d/docker-clean ...          0.0s
  => CACHED [ 6/18] RUN apt-get install -y --no-install-recommends ...      0.0s
  => CACHED [10/18] RUN groupadd --force -g 20 sail                         0.0s
- => [16/18] COPY . /var/www/html                                           9.9s
- => [17/18] RUN rm -f /var/www/html/bootstrap/cache/*.php                  0.4s
- => [18/18] RUN mkdir -p /var/www/html/storage/framework/...              35.9s
+ => [16/18] COPY . /var/www/dash                                           9.9s
+ => [17/18] RUN rm -f /var/www/dash/bootstrap/cache/*.php                  0.4s
+ => [18/18] RUN mkdir -p /var/www/dash/storage/framework/...              35.9s
  => pushing manifest for docker.io/farandal/dash-backend:1.0.0-core       12.3s
 
 ✓ Done.
@@ -232,11 +236,11 @@ Expected output:
 
 Note: --skip-push uses --load which only supports the host platform (linux/arm64).
 [+] Building 111.2s (25/25) FINISHED  docker-container:dash-backend-core-builder
- => CACHED [ 2/18] WORKDIR /var/www/html                                   0.0s
+ => CACHED [ 2/18] WORKDIR /var/www/dash                                   0.0s
  => ...
- => [16/18] COPY . /var/www/html                                           9.9s
- => [17/18] RUN rm -f /var/www/html/bootstrap/cache/*.php                  0.4s
- => [18/18] RUN mkdir -p /var/www/html/storage/framework/...              35.9s
+ => [16/18] COPY . /var/www/dash                                           9.9s
+ => [17/18] RUN rm -f /var/www/dash/bootstrap/cache/*.php                  0.4s
+ => [18/18] RUN mkdir -p /var/www/dash/storage/framework/...              35.9s
  => exporting to docker image format                                      60.7s
  => => exporting layers                                                   20.3s
  => => sending tarball                                                    40.4s
@@ -276,10 +280,10 @@ COMPOSE_PROJECT_NAME=dash_image
 # Docker Hub image
 DASH_IMAGE=farandal/dash-backend:1.0.0-core
 
-# App-level env file — mounted as /var/www/html/.env inside the container
+# App-level env file — mounted as /var/www/dash/.env inside the container
 ENV_FILE=./.env.local
 
-# Domain layer path — mounted as /var/www/html/domain inside the container
+# Domain layer path — mounted as /var/www/dash/domain inside the container
 # Set to the path of the domain module on the host (e.g. ../kitchntabs-domain)
 DOMAIN_PATH=../dash-domain
 
@@ -304,7 +308,7 @@ DBI_REVERB_SERVER_PORT=25001
 
 ### Step 4 — Configure `.env.local` (app-level environment)
 
-`.env.local` is mounted as `/var/www/html/.env` inside the container. It is the single source of truth for all Laravel configuration at runtime. It is excluded from git (`.gitignore` matches `*.env` and `.env.*`).
+`.env.local` is mounted as `/var/www/dash/.env` inside the container. It is the single source of truth for all Laravel configuration at runtime. It is excluded from git (`.gitignore` matches `*.env` and `.env.*`).
 
 **Seeder-driven variables** — control what `migrate:fresh --seed` creates:
 
@@ -579,7 +583,7 @@ The image must contain dev dependencies (`phpunit/phpunit`, `nunomaduro/collisio
 Verify quickly:
 
 ```bash
-docker compose exec app bash -c "test -f /var/www/html/vendor/bin/phpunit && echo OK || echo MISSING"
+docker compose exec app bash -c "test -f /var/www/dash/vendor/bin/phpunit && echo OK || echo MISSING"
 docker compose exec app php artisan | grep -E '^\s+test\s'
 ```
 
@@ -595,7 +599,7 @@ For a permanent fix, ensure the published image bakes dev deps (`Dockerfile.core
 
 ### Test suite layout
 
-`phpunit.xml` (in the image at `/var/www/html/phpunit.xml`) defines two suites:
+`phpunit.xml` (in the image at `/var/www/dash/phpunit.xml`) defines two suites:
 
 | Suite | Directory | Contents |
 |---|---|---|

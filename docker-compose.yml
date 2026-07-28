@@ -19,15 +19,21 @@ services:
       DB_CONNECTION: pgsql
       DB_HOST: pgsql
     volumes:
-      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env"
-      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env.production"
-      - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/html/domain:delegated"
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env"
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env.production"
+      - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/dash/domain:delegated"
       - "dash-composer-cache:/.composer"
-      - ./reports:/var/www/html/reports
-      # Mount patched files from dash-backend so fixes survive container recreation
-      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/html/config/broadcasting.php:ro"
-      - "${BACKEND_PATH:-../dash-backend}/resources/views/websocket-test.blade.php:/var/www/html/resources/views/websocket-test.blade.php:ro"
-      - "${BACKEND_PATH:-../dash-backend}/app/AppNotifications/AppNotificationBuilder.php:/var/www/html/app/AppNotifications/AppNotificationBuilder.php:ro"
+      - ./reports:/var/www/dash/reports
+  
+      # Mount essential Laravel directories for development
+      - "${STORAGE_PATH:-./storage/kitchntabs-backend-domain}:/var/www/dash/storage:delegated" 
+      - "${BACKEND_PATH:-../dash-backend}/app:/var/www/dash/app:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/config:/var/www/dash/config:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/dash/routes:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/dash/resources:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/dash/tests:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/dash/bootstrap:delegated"
     networks:
       - dash
     depends_on:
@@ -50,7 +56,7 @@ services:
       POSTGRES_USER: "${DB_USERNAME:-sail}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
     volumes:
-      - "dash-pgsql:/var/lib/postgresql/data"
+      - "${DB_STORAGE_PATH:-./storage/kitchntabs-backend-domain/pgsql-data}:/var/lib/postgresql/data"
       - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
@@ -120,8 +126,6 @@ networks:
     driver: bridge
 
 volumes:
-  dash-pgsql:
-    driver: local
   dash-redis:
     driver: local
   dash-composer-cache:

@@ -320,7 +320,7 @@ How domains use it:
 
 ## Domain Extension Model
 
-The domain layer is loaded as an optional module mounted into `/var/www/html/domain`.
+The domain layer is loaded as an optional module mounted into `/var/www/dash/domain`.
 
 Main integration points:
 
@@ -386,7 +386,7 @@ docker compose exec app php artisan test --testsuite Core
 Generate JUnit output with:
 
 ```bash
-docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
 ```
 
 Important suite areas include:

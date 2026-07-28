@@ -70,10 +70,10 @@ Open-CommandWindow -Title "dash-backend-docker | Horizon" -Command "docker compo
 Start-Sleep -Seconds $WindowDelaySeconds
 
 Write-Host "[6/7] Opening Laravel log tail terminal window"
-Open-CommandWindow -Title "dash-backend-docker | Laravel logs" -Command "docker compose exec app tail -f /var/www/html/storage/logs/laravel.log"
+Open-CommandWindow -Title "dash-backend-docker | Laravel logs" -Command "docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log"
 Start-Sleep -Seconds $WindowDelaySeconds
 
 Write-Host "[7/7] Opening Core tests terminal window"
-Open-CommandWindow -Title "dash-backend-docker | Core tests" -Command "docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi"
+Open-CommandWindow -Title "dash-backend-docker | Core tests" -Command "docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml"
 
 Write-Host "Done. Reverb, Horizon, log tail, and tests are running in separate terminal windows."

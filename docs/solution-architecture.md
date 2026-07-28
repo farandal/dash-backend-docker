@@ -9,7 +9,7 @@ This document explains how the Dash solution is structured across the core backe
 ```mermaid
 flowchart LR
 	A[dash-backend<br/>Reusable Laravel core] --> B[Built core Docker image]
-	C[fablabos or other domain<br/>Mounted domain code] --> D[Mounted into /var/www/html/domain]
+	C[fablabos or other domain<br/>Mounted domain code] --> D[Mounted into /var/www/dash/domain]
 	B --> E[dash-backend-docker<br/>Runtime project]
 	D --> E
 	E --> F[PostgreSQL]
@@ -56,7 +56,7 @@ Domain ownership includes:
 - domain-specific resources and requests
 - custom workflows that extend the platform
 
-The domain is mounted into the running container at `/var/www/html/domain` and loaded by the core when present.
+The domain is mounted into the running container at `/var/www/dash/domain` and loaded by the core when present.
 
 In this workspace:
 
@@ -227,7 +227,7 @@ At a high level:
 Typical commands in `dash-backend`:
 
 ```bash
-docker run --rm --security-opt seccomp=unconfined -u "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer -e COMPOSER_CACHE_DIR=/tmp/composer/cache -v "$(pwd):/var/www/html" -w /var/www/html laravelsail/php83-composer:latest composer install --ignore-platform-reqs --prefer-dist --no-cache --no-progress
+docker run --rm --security-opt seccomp=unconfined -u "$(id -u):$(id -g)" -e COMPOSER_HOME=/tmp/composer -e COMPOSER_CACHE_DIR=/tmp/composer/cache -v "$(pwd):/var/www/dash" -w /var/www/dash laravelsail/php83-composer:latest composer install --ignore-platform-reqs --prefer-dist --no-cache --no-progress
 
 cp .env.example .env.local
 ```
@@ -283,7 +283,7 @@ docker compose exec app php artisan test --testsuite Core
 JUnit output:
 
 ```bash
-docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
 ```
 
 The Core suite is the primary guardrail for ensuring the reusable platform still works independently of any specific business domain.

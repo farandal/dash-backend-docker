@@ -57,7 +57,7 @@ docker compose exec app php artisan test --testsuite=Domain
 The report is written to `./reports/` on the host (see Volumes section).
 
 ```bash
-docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
 ```
 
 ---
@@ -77,19 +77,19 @@ Both processes are long-running and must be left running in a separate terminal 
 
 ## Accessing Laravel Logs
 
-Laravel writes application logs to `/var/www/html/storage/logs/laravel.log` inside the container.
+Laravel writes application logs to `/var/www/dash/storage/logs/laravel.log` inside the container.
 
 ### Option A — Read directly from the container
 
 ```bash
 # Tail the log in real time
-docker compose exec app tail -f /var/www/html/storage/logs/laravel.log
+docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log
 
 # Read the last 200 lines
-docker compose exec app tail -200 /var/www/html/storage/logs/laravel.log
+docker compose exec app tail -200 /var/www/dash/storage/logs/laravel.log
 
 # Search for errors
-docker compose exec app grep -i "error\|exception" /var/www/html/storage/logs/laravel.log
+docker compose exec app grep -i "error\|exception" /var/www/dash/storage/logs/laravel.log
 ```
 
 ### Option B — Mount the storage directory as a volume (optional)
@@ -98,7 +98,7 @@ To access logs directly on the host, add a volume binding in `docker-compose.yml
 
 ```yaml
 volumes:
-  - ./storage/logs:/var/www/html/storage/logs
+  - ./storage/logs:/var/www/dash/storage/logs
 ```
 
 Then create the local directory first:
@@ -127,10 +127,10 @@ After restarting the stack, `storage/logs/laravel.log` will be readable from the
 
 | Host path | Container path | Purpose |
 |---|---|---|
-| `.env.local` (or value of `ENV_FILE`) | `/var/www/html/.env` | Laravel application environment. All `env()` calls inside the app read from here. Also mounted as `.env.production` so it is always active regardless of `APP_ENV`. |
-| `DOMAIN_PATH` (default `../dash-backend-domain`) | `/var/www/html/domain` | Domain-specific code (controllers, models, policies, migrations). Allows extending the core image with project-specific logic without rebuilding. |
+| `.env.local` (or value of `ENV_FILE`) | `/var/www/dash/.env` | Laravel application environment. All `env()` calls inside the app read from here. Also mounted as `.env.production` so it is always active regardless of `APP_ENV`. |
+| `DOMAIN_PATH` (default `../dash-backend-domain`) | `/var/www/dash/domain` | Domain-specific code (controllers, models, policies, migrations). Allows extending the core image with project-specific logic without rebuilding. |
 | `../dash-backend/database/create-testing-db.sh` | `/docker-entrypoint-initdb.d/` | Bootstrap script run by the `pgsql` and `pgsql_setup` services to create both `DB_DATABASE` and `DB_DATABASE_TEST` databases on first boot. |
-| `./reports` | `/var/www/html/reports` | JUnit XML test reports written by `--log-junit`. Makes CI reports available on the host after a test run. |
+| `./reports` | `/var/www/dash/reports` | JUnit XML test reports written by `--log-junit`. Makes CI reports available on the host after a test run. |
 
 ---
 

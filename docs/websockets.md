@@ -258,9 +258,9 @@ The following source files from `dash-backend/` are bind-mounted into the contai
 
 | Host path | Container path |
 |-----------|----------------|
-| `dash-backend/config/broadcasting.php` | `/var/www/html/config/broadcasting.php` |
-| `dash-backend/resources/views/websocket-test.blade.php` | `/var/www/html/resources/views/websocket-test.blade.php` |
-| `dash-backend/app/AppNotifications/AppNotificationBuilder.php` | `/var/www/html/app/AppNotifications/AppNotificationBuilder.php` |
+| `dash-backend/config/broadcasting.php` | `/var/www/dash/config/broadcasting.php` |
+| `dash-backend/resources/views/websocket-test.blade.php` | `/var/www/dash/resources/views/websocket-test.blade.php` |
+| `dash-backend/app/AppNotifications/AppNotificationBuilder.php` | `/var/www/dash/app/AppNotifications/AppNotificationBuilder.php` |
 
 After editing any of these files, run:
 
