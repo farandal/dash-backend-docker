@@ -1,11 +1,17 @@
 param(
-    [string]$Project = "kitchntabs",
+    # No default project: this repo is shared across all domain checkouts
+    # (vanexa, fablabos, reddorada, kitchntabs, ...), so the project must
+    # always be passed explicitly rather than baked in here per clone.
+    [string]$Project = $env:DASH_PROJECT,
     [string]$Environment = "local",
     [int]$StartupDelaySeconds = 4,
     [int]$WindowDelaySeconds = 3
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrEmpty($Project)) {
+    Write-Error "Project not specified. Usage: run-local.ps1 -Project <project> [-Environment <environment>]. Or set `$env:DASH_PROJECT."
+}
 $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $projectRoot
 
@@ -86,20 +92,27 @@ $Command
     ) | Out-Null
 }
 
-Write-Host "[4/8] Opening Reverb terminal window"
-Open-CommandWindow -Title "dash-backend-docker | $Project | Reverb" -Command "docker compose exec app sh -lc \"ps aux | grep -E 'php artisan reverb:start' | grep -v grep >/dev/null && echo Reverb is already running on port 25001 || php artisan reverb:start\""
+# Reverb and Horizon are no longer started here: the core image is always
+# built from Dockerfile.core.production, which runs supervisord and
+# auto-starts/auto-restarts both (see docker/app/custom-supervisor.conf).
+# To restart them manually after a code change, use:
+#   docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf restart reverb horizon
+# We still tail their supervisor-managed log files below for visibility.
+
+Write-Host "[4/8] Opening Reverb log tail terminal window"
+Open-CommandWindow -Title "dash-backend-docker | $Project | Reverb logs" -Command "docker compose exec app tail -f /var/www/dash/storage/logs/supervisor-reverb.log /var/www/dash/storage/logs/supervisor-reverb-error.log"
 Start-Sleep -Seconds $WindowDelaySeconds
 
-Write-Host "[5/8] Opening Horizon terminal window"
-Open-CommandWindow -Title "dash-backend-docker | $Project | Horizon" -Command "docker compose exec app php artisan horizon"
+Write-Host "[5/8] Opening Horizon log tail terminal window"
+Open-CommandWindow -Title "dash-backend-docker | $Project | Horizon logs" -Command "docker compose exec app tail -f /var/www/dash/storage/logs/supervisor-horizon.log /var/www/dash/storage/logs/supervisor-horizon-error.log"
 Start-Sleep -Seconds $WindowDelaySeconds
 
 Write-Host "[6/8] Opening Laravel log tail terminal window"
-Open-CommandWindow -Title "dash-backend-docker | $Project | Laravel logs" -Command "docker compose exec app tail -f /var/www/html/storage/logs/laravel.log"
+Open-CommandWindow -Title "dash-backend-docker | $Project | Laravel logs" -Command "docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log"
 Start-Sleep -Seconds $WindowDelaySeconds
 
-Write-Host "[7/7] Opening tests terminal window (Core+Domain)"
-Open-CommandWindow -Title "dash-backend-docker | $Project | Tests" -Command "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/html/reports/test_results.xml --no-ansi"
+Write-Host "[7/8] Opening tests terminal window (Core+Domain)"
+Open-CommandWindow -Title "dash-backend-docker | $Project | Tests" -Command "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/dash/reports/test_results.xml --no-ansi"
 
 if ($Environment -eq "tunnel") {
     Write-Host "[8/8] Opening Cloudflare tunnel terminal window"
@@ -108,4 +121,4 @@ if ($Environment -eq "tunnel") {
     Open-CommandWindow -Title "dash-backend-docker | $Project | Cloudflare Tunnel" -Command "node ./scripts/cloudflare-tunnel.js --env-file '$composeEnvFile'"
 }
 
-Write-Host "Done. Reverb, Horizon, log tail, and tests are running in separate terminal windows. Tests run in a single Core+Domain command."
+Write-Host "Done. Reverb and Horizon run automatically via supervisord inside the container; their logs, the Laravel log, and tests are tailing in separate terminal windows."

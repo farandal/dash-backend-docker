@@ -5,7 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-PROJECT="${1:-kitchntabs}"
+# No default project: this repo is shared across all domain checkouts
+# (vanexa, fablabos, reddorada, kitchntabs, ...), so the project must always
+# be passed explicitly (via pnpm dash:<project>:<env> or DASH_PROJECT) rather
+# than baked in here as a per-clone customization.
+PROJECT="${1:-${DASH_PROJECT:-}}"
+if [[ -z "$PROJECT" ]]; then
+  echo "Project not specified. Usage: run-local-mac.sh <project> [environment]" >&2
+  echo "Or set DASH_PROJECT=<project>." >&2
+  exit 1
+fi
 ENVIRONMENT="${2:-local}"
 STARTUP_DELAY_SECONDS="${STARTUP_DELAY_SECONDS:-4}"
 WINDOW_DELAY_SECONDS="${WINDOW_DELAY_SECONDS:-3}"
@@ -30,7 +39,7 @@ resolve_env_file() {
   printf ".env.%s.%s" "$PROJECT" "$env_input"
 }
 
-# The Laravel app env file to mount inside the container (e.g. .env.kitchntabs.local).
+# The Laravel app env file to mount inside the container (e.g. .env.vanexa.local).
 APP_ENV_FILE="$(resolve_env_file "$ENVIRONMENT")"
 if [[ ! -f "$APP_ENV_FILE" ]]; then
   echo "Env file not found: $APP_ENV_FILE" >&2
@@ -90,20 +99,27 @@ open_terminal_window() {
 EOF
 }
 
-echo "[4/8] Opening Reverb terminal window"
-open_terminal_window "dash-backend-docker | $PROJECT | Reverb" "docker compose exec app sh -lc 'ps aux | grep reverb:start | grep -v grep >/dev/null && echo Reverb is already running on port 25001 || php artisan reverb:start --debug'"
+# Reverb and Horizon are no longer started here: the core image is always
+# built from Dockerfile.core.production, which runs supervisord and
+# auto-starts/auto-restarts both (see docker/app/custom-supervisor.conf).
+# To restart them manually after a code change, use:
+#   docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf restart reverb horizon
+# We still tail their supervisor-managed log files below for visibility.
+
+echo "[4/8] Opening Reverb log tail terminal window"
+open_terminal_window "dash-backend-docker | $PROJECT | Reverb logs" "docker compose exec app tail -f /var/www/dash/storage/logs/supervisor-reverb.log /var/www/dash/storage/logs/supervisor-reverb-error.log"
 sleep "$WINDOW_DELAY_SECONDS"
 
-echo "[5/8] Opening Horizon terminal window"
-open_terminal_window "dash-backend-docker | $PROJECT | Horizon" "docker compose exec app php artisan horizon"
+echo "[5/8] Opening Horizon log tail terminal window"
+open_terminal_window "dash-backend-docker | $PROJECT | Horizon logs" "docker compose exec app tail -f /var/www/dash/storage/logs/supervisor-horizon.log /var/www/dash/storage/logs/supervisor-horizon-error.log"
 sleep "$WINDOW_DELAY_SECONDS"
 
 echo "[6/8] Opening Laravel log tail terminal window"
-open_terminal_window "dash-backend-docker | $PROJECT | Laravel logs" "docker compose exec app tail -f /var/www/html/storage/logs/laravel.log"
+open_terminal_window "dash-backend-docker | $PROJECT | Laravel logs" "docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log"
 sleep "$WINDOW_DELAY_SECONDS"
 
-echo "[7/7] Opening tests terminal window (Core+Domain)"
-open_terminal_window "dash-backend-docker | $PROJECT | Tests" "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/html/reports/test_results.xml --no-ansi"
+echo "[7/8] Opening tests terminal window (Core+Domain)"
+open_terminal_window "dash-backend-docker | $PROJECT | Tests" "docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/dash/reports/test_results.xml --no-ansi"
 
 if [[ "$ENVIRONMENT" == "tunnel" ]]; then
   echo "[8/8] Opening Cloudflare tunnel terminal window"
@@ -112,4 +128,4 @@ if [[ "$ENVIRONMENT" == "tunnel" ]]; then
   open_terminal_window "dash-backend-docker | $PROJECT | Cloudflare Tunnel" "node ./scripts/cloudflare-tunnel.js --env-file '$COMPOSE_ENV_FILE'"
 fi
 
-echo "Done. Reverb, Horizon, log tail, and tests are running in separate Terminal windows. Tests run in a single Core+Domain command."
+echo "Done. Reverb and Horizon run automatically via supervisord inside the container; their logs, the Laravel log, and tests are tailing in separate Terminal windows."

@@ -12,24 +12,28 @@ you're working on and run the matching pnpm command.
 ```bash
 # 1. Build the local core image (in dash-backend, once or after source changes)
 cd ../dash-backend
-docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
+docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .
 
 # 2. Start the stack for your domain (in dash-backend-docker)
 cd ../dash-backend-docker
-pnpm dash:kitchntabs:local    # or:  pnpm dash:fablabos:local  /  pnpm dash:reddorada:local
+pnpm dash:vanexa:local    # or:  pnpm dash:fablabos:local  /  pnpm dash:reddorada:local  /  pnpm dash:kitchntabs:local
 
 # 3. Install mounted domain packages (first run / after --force-recreate)
 docker compose exec app composer update --no-interaction
 
 # 4. Migrate + seed
 docker compose exec app php artisan migrate:fresh --seed
-
-# 5. Start realtime workers (separate terminals — opened automatically by the launcher)
-docker compose exec app php artisan horizon
-docker compose exec app php artisan reverb:start --debug
 ```
 
-API → http://localhost:25000 · WS test → http://localhost:25000/ws · Mailhog → http://localhost:25026
+Reverb and Horizon are **not** started manually — the image runs `supervisord`, which
+auto-starts and auto-restarts both at container boot (see
+`docker/app/custom-supervisor.conf`). To restart either after a code change:
+
+```bash
+docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf restart reverb horizon
+```
+
+API → http://localhost:25100 · WS test → http://localhost:26001/ws · Mailhog → http://localhost:25026
 
 ---
 
@@ -37,7 +41,7 @@ API → http://localhost:25000 · WS test → http://localhost:25000/ws · Mailh
 
 | Domain | pnpm command | Compose env | App env | DB |
 |---|---|---|---|---|
-| **kitchntabs** | `pnpm dash:kitchntabs:local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `kt_dev_db` |
+| **vanexa** | `pnpm dash:vanexa:local` | `.env.vanexa` | `.env.vanexa.local` | `kt_dev_db` |
 | **fablabos** | `pnpm dash:fablabos:local` | `.env.fablabos` | `.env.fablabos.local` | `fl_dev_db` |
 | **reddorada** | `pnpm dash:reddorada:local` | `.env.reddorada` | `.env.reddorada.local` | `rd_dev_db` |
 
@@ -45,7 +49,7 @@ Each domain uses a **pair** of env files:
 
 - **`.env.<domain>`** — read by Docker Compose (`--env-file`): sets `DOMAIN_PATH`, `STORAGE_PATH`,
   `DB_*` credentials, ports, and Cloudflare tunnel config.
-- **`.env.<domain>.local`** — mounted as `/var/www/html/.env` inside the container: full Laravel
+- **`.env.<domain>.local`** — mounted as `/var/www/dash/.env` inside the container: full Laravel
   application config.
 - **`.env.<domain>.tunnel`** — tunnel-mode variant of the app env (overrides `APP_URL`,
   `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME` for public Cloudflare hostnames).
@@ -53,8 +57,8 @@ Each domain uses a **pair** of env files:
 All env files are gitignored. Copy the templates to create yours:
 
 ```bash
-cp env.domain.example       .env.kitchntabs
-cp env.domain.local.example .env.kitchntabs.local
+cp env.domain.example       .env.vanexa
+cp env.domain.local.example .env.vanexa.local
 # edit both files — fill in DB credentials, APP_KEY, domain-specific values
 ```
 
@@ -69,7 +73,7 @@ cp env.domain.local.example .env.kitchntabs.local
 DASH-FRAMEWORK/
 ├── dash-backend/                    # Laravel core source + sail Dockerfile
 ├── dash-backend-docker/             # this project
-├── kitchntabs-backend-domain/       # KitchnTabs domain (optional)
+├── vanexa-backend-domain/       # vanexa domain (optional)
 ├── fablabos-backend-domain/         # Fablabos domain (optional)
 └── reddorada-backend-domain/        # Reddorada domain (optional)
 ```
@@ -78,12 +82,13 @@ DASH-FRAMEWORK/
 
 ## Step 1 — Build the local core image
 
-The local image uses the sail Dockerfile (`php -S`, app at `/var/www/html`).
-`OBFUSCATE_APP=false` keeps source readable for debugging.
+The local image uses `Dockerfile.core.production` (nginx + php-fpm + supervisord, app at
+`/var/www/dash`). `INSTALL_DEV_DEPS=true` keeps require-dev packages (Pint, Sail, Mockery,
+Faker, Pest, etc.) in the image for local development.
 
 ```bash
 cd ../dash-backend
-docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
+docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .
 ```
 
 `docker-compose.yml` defaults `DASH_IMAGE` to `local/dash-backend-core:latest`, so no
@@ -120,7 +125,7 @@ DBI_FORWARD_MAILHOG_PORT=25025
 DBI_FORWARD_MAILHOG_DASHBOARD_PORT=25026
 ```
 
-**`.env.<domain>.local`** (Laravel app level — mounted as `/var/www/html/.env`):
+**`.env.<domain>.local`** (Laravel app level — mounted as `/var/www/dash/.env`):
 
 ```ini
 APP_ENV=local
@@ -143,9 +148,9 @@ REDIS_CLIENT=predis
 REDIS_PASSWORD=null
 
 REVERB_SERVER_HOST=0.0.0.0   # bind inside the container
-REVERB_SERVER_PORT=25001
-REVERB_HOST=localhost          # browser connects to ws://localhost:25001
-REVERB_PORT=25001
+REVERB_SERVER_PORT=26001
+REVERB_HOST=localhost          # browser connects to ws://localhost:26001
+REVERB_PORT=26001
 REVERB_SCHEME=http
 REVERB_APP_ID=mock_app
 REVERB_APP_KEY=mock_key
@@ -167,7 +172,7 @@ The launcher (`scripts/run-local.mjs`) selects `--env-file .env.<domain>` and op
 terminal windows for Reverb, Horizon, log tail, and tests:
 
 ```bash
-pnpm dash:kitchntabs:local
+pnpm dash:vanexa:local
 pnpm dash:fablabos:local
 pnpm dash:reddorada:local
 ```
@@ -175,7 +180,7 @@ pnpm dash:reddorada:local
 Or call the script directly for any project/environment combination:
 
 ```bash
-node scripts/run-local.mjs kitchntabs local
+node scripts/run-local.mjs vanexa local
 node scripts/run-local.mjs fablabos   tunnel
 node scripts/run-local.mjs reddorada  production
 ```
@@ -220,8 +225,8 @@ docker compose exec app php artisan reverb:start --debug
 
 ## Access
 
-- API: http://localhost:25000
-- WebSocket diagnostics: http://localhost:25000/ws
+- API: http://localhost:25100
+- WebSocket diagnostics: http://localhost:26001/ws
 - Mailhog UI: http://localhost:25026
 
 ---
@@ -243,7 +248,7 @@ The stack runs **one domain at a time**. To switch:
 
 ```bash
 docker compose down -v                      # stop + wipe volumes (data is domain-specific)
-pnpm dash:fablabos:local                   # restart with the new domain env
+pnpm dash:{project}:local                   # restart with the new domain env
 docker compose exec app php artisan migrate:fresh --seed
 ```
 
@@ -256,7 +261,7 @@ docker compose exec app php artisan migrate:fresh --seed
 
 | | Local dev (this project) | Production |
 |---|---|---|
-| Core Dockerfile | `dash-backend/docker/php8.3/Dockerfile.core` (sail, `php -S`, `/var/www/html`) | `dash-backend/Dockerfile.core.production` (nginx + php-fpm, `/var/www/dash`) |
+| Core Dockerfile | `dash-backend/Dockerfile.core.production --build-arg INSTALL_DEV_DEPS=true` (nginx + php-fpm + supervisord, `/var/www/dash`, domain mounted) | `dash-backend/Dockerfile.core.production` (same Dockerfile, `INSTALL_DEV_DEPS=false`, domain baked) |
 | Image tag | `local/...:latest` or `*-core` | `*-prod` |
-| Domain | **mounted** live at `/var/www/html/domain` | **baked** → ECR |
+| Domain | **mounted** live at `/var/www/dash/domain` | **baked** → ECR |
 | Run by | `docker compose` here | ECS Fargate |

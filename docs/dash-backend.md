@@ -29,7 +29,7 @@ The core owns platform-level concerns that must remain stable across all domains
 - Public APIs and administration APIs that domains can reuse.
 - Shared migrations and base data seeders.
 
-The core must not become the home for client-only business entities. In this workspace, currencies, tenancies, subscriptions, and payments belong to the core, while product/catalog/ecommerce features belong to the domain (`kitchntabs-backend-domain`), not to the generic core.
+The core must not become the home for client-only business entities. In this workspace, currencies, tenancies, subscriptions, and payments belong to the core, while product/catalog/ecommerce features belong to the domain (`vanexa-backend-domain`), not to the generic core.
 
 ## Feature Map
 
@@ -324,7 +324,7 @@ How domains use it:
 
 ## Domain Extension Model
 
-The domain layer is loaded as an optional module mounted into `/var/www/html/domain`.
+The domain layer is loaded as an optional module mounted into `/var/www/dash/domain`.
 
 Main integration points:
 
@@ -375,7 +375,7 @@ When evaluating where a new feature belongs, use this rule:
 - If more than one domain should depend on it, put it in the core.
 - If it is specific to one client or vertical, keep it in the domain.
 
-In this workspace, ecommerce entities such as products and categories are a domain concern and belong in the domain (`kitchntabs-backend-domain`), not in the generic core.
+In this workspace, ecommerce entities such as products and categories are a domain concern and belong in the domain (`vanexa-backend-domain`), not in the generic core.
 
 ## Core Test Suite
 
@@ -390,7 +390,7 @@ docker compose exec app php artisan test --testsuite Core
 Generate JUnit output with:
 
 ```bash
-docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/html/reports/core_results.xml --no-ansi
+docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml --no-ansi
 ```
 
 Important suite areas include:
@@ -428,7 +428,7 @@ Interpretation:
 
 - Keep currencies, tenancies, subscriptions, and payments in the core.
 - Keep optional domain-only business models out of the core dependency chain.
-- Keep product and category logic in `kitchntabs-backend-domain`, where that business capability actually belongs.
+- Keep product and category logic in `vanexa-backend-domain`, where that business capability actually belongs.
 - Do not add new domain requirements to core tests unless the feature is genuinely core-owned.
 - Prefer extension over duplication: a domain should wrap or compose core functionality instead of copying it.
 

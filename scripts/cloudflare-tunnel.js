@@ -21,7 +21,7 @@ function usage() {
 
 Examples:
   ./scripts/cloudflare-tunnel.sh
-  node ./scripts/cloudflare-tunnel.js --hostname dev-local-api.kitchntabs.com
+  node ./scripts/cloudflare-tunnel.js --hostname dev-local-api.vanexa.com
   node ./scripts/cloudflare-tunnel.js --env-file .env --no-update-env
 
 Behavior:
@@ -38,7 +38,7 @@ Optional DNS API automation:
 
 Multi-hostname routing (one named tunnel, several public hostnames):
   - Set CF_TUNNEL_HOSTNAME_<SLOT> + CF_TUNNEL_LOCAL_<SLOT> pairs, where <SLOT> is one of:
-    API, WS, WEB, SYSTEM (e.g. CF_TUNNEL_HOSTNAME_API=api-dev.kitchntabs.com,
+    API, WS, WEB, SYSTEM (e.g. CF_TUNNEL_HOSTNAME_API=api-dev.vanexa.com,
     CF_TUNNEL_LOCAL_API=http://localhost:25000).
   - When at least one CF_TUNNEL_HOSTNAME_<SLOT> is set, the script switches to multi-route mode:
     it pushes ingress rules to the named tunnel via the Cloudflare API
@@ -732,7 +732,7 @@ async function main() {
   }
 
   console.log('No custom hostname configured. Falling back to quick tunnel URL.');
-  console.log(`Tip: set CF_TUNNEL_HOSTNAME=dev-local-api.kitchntabs.com in ${envFile} to use your custom domain.`);
+  console.log(`Tip: set CF_TUNNEL_HOSTNAME=dev-local-api.vanexa.com in ${envFile} to use your custom domain.`);
 
   let didUpdateEnv = false;
   runQuickTunnel(localUrl, (quickUrl) => {

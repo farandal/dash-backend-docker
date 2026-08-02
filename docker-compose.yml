@@ -9,7 +9,7 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${DBI_APP_PORT:-18000}:80"
-      - "${DBI_REVERB_SERVER_PORT:-25001}:${REVERB_SERVER_PORT:-25001}"
+      - "${DBI_REVERB_SERVER_PORT:-26001}:${REVERB_SERVER_PORT:-6001}"
     environment:
       WWWUSER: "${WWWUSER:-1000}"
       LARAVEL_SAIL: 1
@@ -19,17 +19,17 @@ services:
       DB_CONNECTION: pgsql
       DB_HOST: pgsql
     volumes:
-      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env"
-      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/html/.env.production"
-      - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/html/domain:delegated"
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env"
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env.production"
+      - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/dash/domain:delegated"
       # Dev storage on the host so assets, logs, cache & sessions live on local disk
       # (not baked inside the image). Folder is named after the domain project.
-      - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/html/storage:delegated"
+      - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/dash/storage:delegated"
       - "dash-composer-cache:/.composer"
-      - ./reports:/var/www/html/reports
+      - ./reports:/var/www/dash/reports
       # config/ is NOT mounted whole below, so keep these individual patched-file mounts.
-      - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/html/config/firebase.php:ro"
-      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/html/config/broadcasting.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/dash/config/firebase.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/dash/config/broadcasting.php:ro"
       #
       # --- Optional: mount dash-backend CORE SOURCE for local development ----------
       # Edit core source on the host (../dash-backend) and changes apply live in the
@@ -38,14 +38,14 @@ services:
       # purely from the baked image. NOTE: vendor/ and config/ deliberately stay
       # baked (config/firebase.php is patched above); these supersede any per-file
       # core mounts (e.g. routes/system.php, the SystemPaymentGateway feature files).
-      - "${BACKEND_PATH:-../dash-backend}/app:/var/www/html/app:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/html/bootstrap:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/html/database:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/html/lang:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/public:/var/www/html/public:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/html/resources:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/html/routes:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/html/tests:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/app:/var/www/dash/app:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/dash/bootstrap:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/dash/lang:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/public:/var/www/dash/public:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/dash/resources:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/dash/routes:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/dash/tests:delegated"
       # ----------------------------------------------------------------------------
     networks:
       - dash
@@ -83,7 +83,7 @@ services:
       POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
     volumes:
       - "dash-pgsql:/var/lib/postgresql"
-      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
+      - "${BACKEND_PATH:-../dash-backend}/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
     healthcheck:
@@ -110,7 +110,7 @@ services:
       - -lc
       - /docker-entrypoint-initdb.d/10-create-testing-db.sh && tail -f /dev/null
     volumes:
-      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
+      - "${BACKEND_PATH:-../dash-backend}/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
     healthcheck:

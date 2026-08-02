@@ -1,6 +1,14 @@
 import { spawnSync } from "node:child_process";
 
-const project = process.argv[2] || process.env.DASH_PROJECT || "kitchntabs";
+// No default project: this repo is shared across all domain checkouts
+// (vanexa, fablabos, reddorada, kitchntabs, ...), so the project must always
+// be passed explicitly (arg or DASH_PROJECT) rather than baked in per clone.
+const project = process.argv[2] || process.env.DASH_PROJECT;
+if (!project) {
+  console.error("Project not specified. Usage: pnpm dash:start -- <project> [environment]");
+  console.error("Or set DASH_PROJECT=<project>.");
+  process.exit(1);
+}
 const environment = process.argv[3] || process.env.DASH_ENV || "local";
 const isWindows = process.platform === "win32";
 

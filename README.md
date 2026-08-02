@@ -4,10 +4,11 @@ This guide covers the full reference for the local DASH backend stack.
 
 > **New here?** Start with [QUICK_SETUP.md](./QUICK_SETUP.md) for the condensed flow.
 >
-> **Dev vs Production:** this project runs the **sail core** lineage
-> (`docker/php8.3/Dockerfile.core`, `php -S`, app at `/var/www/html`, domain *mounted* live).
-> Production is a separate lineage (`dash-backend/Dockerfile.core.production`, nginx + php-fpm,
-> `/var/www/dash`, domain *baked* → ECR). Use `*-core` / `local:latest` images here, never `*-prod`.
+> **Dev vs Production:** local dev and production both build from the same lineage —
+> `dash-backend/Dockerfile.core.production` (nginx + php-fpm + supervisord, app at
+> `/var/www/dash`). For local dev, pass `--build-arg INSTALL_DEV_DEPS=true` to keep
+> require-dev packages in the image; the domain is still mounted live via
+> docker-compose.yml, unlike a real production build where it's baked in.
 
 ---
 
@@ -18,9 +19,10 @@ layer mounted on top of the shared `dash-backend` core:
 
 | Domain | pnpm shortcut | Compose env | App env | Domain repo | DB |
 |---|---|---|---|---|---|
-| **kitchntabs** | `pnpm dash:kitchntabs:local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `../kitchntabs-backend-domain` | `kt_dev_db` |
+| **vanexa** | `pnpm dash:vanexa:local` | `.env.vanexa` | `.env.vanexa.local` | `../vanexa-backend-domain` | `kt_dev_db` |
 | **fablabos** | `pnpm dash:fablabos:local` | `.env.fablabos` | `.env.fablabos.local` | `../fablabos-backend-domain` | `fl_dev_db` |
 | **reddorada** | `pnpm dash:reddorada:local` | `.env.reddorada` | `.env.reddorada.local` | `../reddorada-backend-domain` | `rd_dev_db` |
+| **kitchntabs** | `pnpm dash:kitchntabs:local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `../kitchntabs-backend-domain` | `kt_dev_db` |
 
 ### Env file pairs
 
@@ -35,7 +37,7 @@ env.domain.local.example  →  .env.<domain>.local  (Laravel app level)
   `STORAGE_PATH`, `DB_*` creds, port mappings, and Cloudflare tunnel config. The script
   passes this file explicitly; Docker Compose does **not** auto-load it (only a literal `.env`
   is auto-loaded, which is not present here by design).
-- **`.env.<domain>.local`** — mounted as `/var/www/html/.env` inside the container. This is
+- **`.env.<domain>.local`** — mounted as `/var/www/dash/.env` inside the container. This is
   the single source of truth for all Laravel configuration at runtime.
 - **`.env.<domain>.tunnel`** — variant of the app env for Cloudflare tunnel mode. Overrides
   `APP_URL`, `REVERB_HOST`, `REVERB_PORT`, and `REVERB_SCHEME` for the public hostnames
@@ -62,11 +64,11 @@ docker compose exec app php artisan migrate:fresh --seed
 ```bash
 # 1. Build the local core (in dash-backend)
 cd ../dash-backend
-docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
+docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .
 
 # 2. Start the stack (in dash-backend-docker)
 cd ../dash-backend-docker
-pnpm dash:kitchntabs:local   # or fablabos / reddorada
+pnpm dash:vanexa:local   # or fablabos / reddorada / kitchntabs
 
 # 3. Pull mounted domain packages into the container
 docker compose exec app composer update --no-interaction
@@ -81,9 +83,9 @@ docker compose exec app php artisan migrate:fresh --seed
 
 ```bash
 # Domain-specific launchers
-pnpm dash:kitchntabs:local       # kitchntabs — local dev
-pnpm dash:kitchntabs:tunnel      # kitchntabs — with Cloudflare tunnel
-pnpm dash:kitchntabs:production  # kitchntabs — production image
+pnpm dash:vanexa:local       # vanexa — local dev
+pnpm dash:vanexa:tunnel      # vanexa — with Cloudflare tunnel
+pnpm dash:vanexa:production  # vanexa — production image
 
 pnpm dash:fablabos:local
 pnpm dash:fablabos:tunnel
@@ -93,15 +95,18 @@ pnpm dash:reddorada:local
 pnpm dash:reddorada:tunnel
 pnpm dash:reddorada:production
 
-# Aliases kept for convenience
-pnpm dash:start                  # same as dash:kitchntabs:local
-pnpm dash:start:local            # same as dash:kitchntabs:local
-pnpm dash:start:tunnel           # same as dash:kitchntabs:tunnel
+pnpm dash:kitchntabs:local
+pnpm dash:kitchntabs:tunnel
+pnpm dash:kitchntabs:production
+
+# Generic launcher — no default project is baked in, always pass one explicitly
+pnpm dash:start -- <project> <environment>
 
 # Tunnel only (stack already running)
-pnpm cloudflare:tunnel:kitchntabs
+pnpm cloudflare:tunnel:vanexa
 pnpm cloudflare:tunnel:fablabos
 pnpm cloudflare:tunnel:reddorada
+pnpm cloudflare:tunnel:kitchntabs
 
 # API docs
 pnpm docs:generate
@@ -112,7 +117,7 @@ You can also call the cross-platform launcher directly:
 
 ```bash
 node scripts/run-local.mjs <project> <environment>
-# <project>     : kitchntabs | fablabos | reddorada
+# <project>     : vanexa | fablabos | reddorada | kitchntabs
 # <environment> : local | tunnel | production  (or any suffix matching .env.<domain>.<suffix>)
 ```
 
@@ -156,8 +161,8 @@ docker compose exec app php artisan media-library:regenerate
 
 ## Verification
 
-- **API:** http://localhost:25000
-- **WebSocket diagnostics:** http://localhost:25000/ws
+- **API:** http://localhost:25100
+- **WebSocket diagnostics:** http://localhost:26001/ws
 - **Mailhog UI:** http://localhost:25026
 - **Test reports:** `reports/core_results_<domain>.xml`, `reports/domain_results.xml`
 
@@ -182,7 +187,7 @@ docker compose exec app php artisan media-library:regenerate
 ### Architecture overview
 
 ```
-dash-backend/                    ← Laravel source + Dockerfile.core + migrations
+dash-backend/                    ← Laravel source + Dockerfile.core.production + migrations
     └── docker-publish-core.sh   ← Build & push script
           │
           ▼
@@ -321,7 +326,7 @@ CF_ZONE_NAME=<domain>.com
 CF_TUNNEL_NAME=<domain>-dev       # created/looked up automatically
 
 CF_TUNNEL_HOSTNAME_API=api-dev.<domain>.com
-CF_TUNNEL_LOCAL_API=http://localhost:25000
+CF_TUNNEL_LOCAL_API=http://localhost:25100
 
 CF_TUNNEL_HOSTNAME_WS=ws-dev.<domain>.com
 CF_TUNNEL_LOCAL_WS=http://localhost:25001
@@ -371,7 +376,7 @@ Dev dependencies (`phpunit/phpunit`, `nunomaduro/collision`) must be present in 
 Verify:
 
 ```bash
-docker compose exec app bash -c "test -f /var/www/html/vendor/bin/phpunit && echo OK || echo MISSING"
+docker compose exec app bash -c "test -f /var/www/dash/vendor/bin/phpunit && echo OK || echo MISSING"
 docker compose exec app php artisan | grep -E '^\s+test\s'
 ```
 

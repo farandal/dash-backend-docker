@@ -3,10 +3,11 @@
 > **New here?** Start with [QUICK_SETUP.md](./QUICK_SETUP.md).
 > **Full reference:** [README.md](./README.md)
 >
-> **Dev vs Production:** this project runs the **sail core** lineage
-> (`docker/php8.3/Dockerfile.core`, `php -S`, `/var/www/html`, domain *mounted*).
-> Production is separate (`Dockerfile.core.production`, nginx + php-fpm, `/var/www/dash`,
-> domain *baked* → ECR). Use `*-core` / `local:latest` here, never `*-prod`.
+> **Dev vs Production:** local dev and production both build from the same lineage —
+> `Dockerfile.core.production` (nginx + php-fpm + supervisord, app at `/var/www/dash`).
+> For local dev, pass `--build-arg INSTALL_DEV_DEPS=true` to keep require-dev packages in
+> the image; the domain is still mounted live via docker-compose.yml, unlike a real
+> production build where it's baked in.
 >
 > **First run:** after `docker compose up`, run
 > `docker compose exec app composer update --no-interaction` to pull the mounted domain's
@@ -17,16 +18,17 @@
 ## Domain overview
 
 Three domains share the same `dash-backend` core image. Each domain has its own:
-- Composer domain layer (mounted at `/var/www/html/domain`)
+- Composer domain layer (mounted at `/var/www/dash/domain`)
 - PostgreSQL database (separate credentials)
 - Runtime storage (assets, logs, cache — named folder under `./storage/`)
 - Env file pair (`.env.<domain>` + `.env.<domain>.local`)
 
 | Domain | Compose env | App env | DB | Domain repo |
 |---|---|---|---|---|
-| **kitchntabs** | `.env.kitchntabs` | `.env.kitchntabs.local` | `kt_dev_db` | `../kitchntabs-backend-domain` |
+| **vanexa** | `.env.vanexa` | `.env.vanexa.local` | `kt_dev_db` | `../vanexa-backend-domain` |
 | **fablabos** | `.env.fablabos` | `.env.fablabos.local` | `fl_dev_db` | `../fablabos-backend-domain` |
 | **reddorada** | `.env.reddorada` | `.env.reddorada.local` | `rd_dev_db` | `../reddorada-backend-domain` |
+| **kitchntabs** | `.env.kitchntabs` | `.env.kitchntabs.local` | `kt_dev_db` | `../kitchntabs-backend-domain` |
 
 Copy the templates to create env files for a new domain:
 
@@ -40,10 +42,10 @@ cp env.domain.local.example .env.<domain>.local
 ## pnpm launchers
 
 ```bash
-# kitchntabs
-pnpm dash:kitchntabs:local
-pnpm dash:kitchntabs:tunnel
-pnpm dash:kitchntabs:production
+# vanexa
+pnpm dash:vanexa:local
+pnpm dash:vanexa:tunnel
+pnpm dash:vanexa:production
 
 # fablabos
 pnpm dash:fablabos:local
@@ -55,9 +57,13 @@ pnpm dash:reddorada:local
 pnpm dash:reddorada:tunnel
 pnpm dash:reddorada:production
 
-# convenience aliases (→ kitchntabs:local / tunnel)
-pnpm dash:start
-pnpm dash:start:tunnel
+# kitchntabs
+pnpm dash:kitchntabs:local
+pnpm dash:kitchntabs:tunnel
+pnpm dash:kitchntabs:production
+
+# generic launcher (no project baked in — always pass one explicitly)
+pnpm dash:start -- <project> <environment>
 ```
 
 You can also invoke the cross-platform launcher directly:
@@ -65,7 +71,7 @@ You can also invoke the cross-platform launcher directly:
 ```bash
 node scripts/run-local.mjs <project> <environment>
 # examples:
-node scripts/run-local.mjs kitchntabs local
+node scripts/run-local.mjs vanexa local
 node scripts/run-local.mjs fablabos   tunnel
 node scripts/run-local.mjs reddorada  production
 ```
@@ -78,8 +84,10 @@ The launcher:
 3. Exports `COMPOSE_PROJECT_NAME` so subsequent `docker compose exec` calls target the
    correct running project.
 4. Runs `docker compose up -d` → `artisan migrate` → `pnpm docs:generate`.
-5. Opens Reverb, Horizon, log tail, and Core+Domain test windows in separate Terminal
-   sessions (macOS).
+5. Opens Reverb log tail, Horizon log tail, Laravel log tail, and Core+Domain test windows
+   in separate Terminal sessions (macOS). Reverb and Horizon themselves are
+   supervisord-managed inside the container (auto-started at boot) — these windows only
+   tail their supervisor log files rather than running the processes directly.
 
 ---
 
@@ -88,7 +96,7 @@ The launcher:
 ```bash
 # In dash-backend — run once, or after core source changes
 cd ../dash-backend
-docker build -f docker/php8.3/Dockerfile.core -t local/dash-backend-core:latest --build-arg OBFUSCATE_APP=false .
+docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .
 ```
 
 ---
@@ -119,7 +127,7 @@ docker compose up -d --force-recreate app        # recreate app container (picks
 # Logs and shell
 docker compose logs -f app
 docker compose exec app bash
-docker compose exec app tail -f /var/www/html/storage/logs/laravel.log
+docker compose exec app tail -f /var/www/dash/storage/logs/laravel.log
 
 # Migrations / seeding
 docker compose exec app php artisan migrate:fresh --seed
@@ -176,7 +184,7 @@ docker compose exec app php artisan test --filter TenantAuthorizationTest
 docker compose exec app php artisan test tests/Unit/UuidV7Test.php
 
 # JUnit XML output
-docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/html/reports/test_results.xml --no-ansi
+docker compose exec app php artisan test --testsuite=Core,Domain --log-junit /var/www/dash/reports/test_results.xml --no-ansi
 
 # Direct phpunit
 docker compose exec app vendor/bin/phpunit --testsuite Core
@@ -206,7 +214,7 @@ docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
 
 **DBeaver connection:**
 
-| Field | kitchntabs | fablabos | reddorada |
+| Field | vanexa | fablabos | reddorada |
 |---|---|---|---|
 | Host | `localhost` | `localhost` | `localhost` |
 | Port | `25432` | `25432` | `25432` |
@@ -220,7 +228,7 @@ docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ### Tunnel only (stack already running)
 
 ```bash
-pnpm cloudflare:tunnel:kitchntabs
+pnpm cloudflare:tunnel:vanexa
 pnpm cloudflare:tunnel:fablabos
 pnpm cloudflare:tunnel:reddorada
 ```
@@ -228,7 +236,7 @@ pnpm cloudflare:tunnel:reddorada
 ### Start stack + tunnel together
 
 ```bash
-pnpm dash:kitchntabs:tunnel
+pnpm dash:vanexa:tunnel
 pnpm dash:fablabos:tunnel
 pnpm dash:reddorada:tunnel
 ```
@@ -245,10 +253,10 @@ CF_ZONE_NAME=<domain>.com
 CF_TUNNEL_NAME=<domain>-dev
 
 CF_TUNNEL_HOSTNAME_API=api-dev.<domain>.com
-CF_TUNNEL_LOCAL_API=http://localhost:25000
+CF_TUNNEL_LOCAL_API=http://localhost:25100
 
 CF_TUNNEL_HOSTNAME_WS=ws-dev.<domain>.com
-CF_TUNNEL_LOCAL_WS=http://localhost:25001
+CF_TUNNEL_LOCAL_WS=http://localhost:26001
 
 # CF_TUNNEL_TOKEN is written back automatically after first run — leave blank initially
 ```
