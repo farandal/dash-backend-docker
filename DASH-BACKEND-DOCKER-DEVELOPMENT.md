@@ -42,28 +42,17 @@ cp env.domain.local.example .env.<domain>.local
 ## pnpm launchers
 
 ```bash
-# vanexa
-pnpm dash:vanexa:local
-pnpm dash:vanexa:tunnel
-pnpm dash:vanexa:production
+# generic launcher — no project is baked in, always pass one explicitly
+pnpm dash:start <project> <environment>
 
-# fablabos
-pnpm dash:fablabos:local
-pnpm dash:fablabos:tunnel
-pnpm dash:fablabos:production
+# examples
+pnpm dash:start vanexa local
+pnpm dash:start vanexa tunnel
+pnpm dash:start vanexa production
 
-# reddorada
-pnpm dash:reddorada:local
-pnpm dash:reddorada:tunnel
-pnpm dash:reddorada:production
-
-# kitchntabs
-pnpm dash:kitchntabs:local
-pnpm dash:kitchntabs:tunnel
-pnpm dash:kitchntabs:production
-
-# generic launcher (no project baked in — always pass one explicitly)
-pnpm dash:start -- <project> <environment>
+pnpm dash:start fablabos local
+pnpm dash:start reddorada tunnel
+pnpm dash:start kitchntabs production
 ```
 
 You can also invoke the cross-platform launcher directly:
@@ -228,17 +217,17 @@ docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ### Tunnel only (stack already running)
 
 ```bash
-pnpm cloudflare:tunnel:vanexa
-pnpm cloudflare:tunnel:fablabos
-pnpm cloudflare:tunnel:reddorada
+pnpm cloudflare:tunnel --env-file .env.vanexa
+pnpm cloudflare:tunnel --env-file .env.fablabos
+pnpm cloudflare:tunnel --env-file .env.reddorada
 ```
 
 ### Start stack + tunnel together
 
 ```bash
-pnpm dash:vanexa:tunnel
-pnpm dash:fablabos:tunnel
-pnpm dash:reddorada:tunnel
+pnpm dash:start vanexa tunnel
+pnpm dash:start fablabos tunnel
+pnpm dash:start reddorada tunnel
 ```
 
 This uses `.env.<domain>.tunnel` as the Laravel app env (sets `APP_URL`, `REVERB_HOST`,
@@ -280,7 +269,7 @@ pnpm docs:start        # generate + start the local docs UI
 
 ```bash
 docker compose down -v                           # wipe domain-specific DB data
-pnpm dash:<new-domain>:local                     # restart with new env pair
+pnpm dash:start <new-domain> local                # restart with new env pair
 docker compose exec app composer update --no-interaction
 docker compose exec app php artisan migrate:fresh --seed
 ```

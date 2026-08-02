@@ -16,7 +16,7 @@ docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --b
 
 # 2. Start the stack for your domain (in dash-backend-docker)
 cd ../dash-backend-docker
-pnpm dash:vanexa:local    # or:  pnpm dash:fablabos:local  /  pnpm dash:reddorada:local  /  pnpm dash:kitchntabs:local
+pnpm dash:start vanexa local    # or:  fablabos / reddorada / kitchntabs
 
 # 3. Install mounted domain packages (first run / after --force-recreate)
 docker compose exec app composer update --no-interaction
@@ -41,9 +41,9 @@ API → http://localhost:25100 · WS test → http://localhost:26001/ws · Mailh
 
 | Domain | pnpm command | Compose env | App env | DB |
 |---|---|---|---|---|
-| **vanexa** | `pnpm dash:vanexa:local` | `.env.vanexa` | `.env.vanexa.local` | `kt_dev_db` |
-| **fablabos** | `pnpm dash:fablabos:local` | `.env.fablabos` | `.env.fablabos.local` | `fl_dev_db` |
-| **reddorada** | `pnpm dash:reddorada:local` | `.env.reddorada` | `.env.reddorada.local` | `rd_dev_db` |
+| **vanexa** | `pnpm dash:start vanexa local` | `.env.vanexa` | `.env.vanexa.local` | `kt_dev_db` |
+| **fablabos** | `pnpm dash:start fablabos local` | `.env.fablabos` | `.env.fablabos.local` | `fl_dev_db` |
+| **reddorada** | `pnpm dash:start reddorada local` | `.env.reddorada` | `.env.reddorada.local` | `rd_dev_db` |
 
 Each domain uses a **pair** of env files:
 
@@ -172,9 +172,9 @@ The launcher (`scripts/run-local.mjs`) selects `--env-file .env.<domain>` and op
 terminal windows for Reverb, Horizon, log tail, and tests:
 
 ```bash
-pnpm dash:vanexa:local
-pnpm dash:fablabos:local
-pnpm dash:reddorada:local
+pnpm dash:start vanexa local
+pnpm dash:start fablabos local
+pnpm dash:start reddorada local
 ```
 
 Or call the script directly for any project/environment combination:
@@ -248,7 +248,7 @@ The stack runs **one domain at a time**. To switch:
 
 ```bash
 docker compose down -v                      # stop + wipe volumes (data is domain-specific)
-pnpm dash:{project}:local                   # restart with the new domain env
+pnpm dash:start <project> local             # restart with the new domain env
 docker compose exec app php artisan migrate:fresh --seed
 ```
 

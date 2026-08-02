@@ -17,12 +17,12 @@ This guide covers the full reference for the local DASH backend stack.
 The stack supports three independent domains. Each domain is a self-contained Laravel tenant
 layer mounted on top of the shared `dash-backend` core:
 
-| Domain | pnpm shortcut | Compose env | App env | Domain repo | DB |
+| Domain | pnpm command | Compose env | App env | Domain repo | DB |
 |---|---|---|---|---|---|
-| **vanexa** | `pnpm dash:vanexa:local` | `.env.vanexa` | `.env.vanexa.local` | `../vanexa-backend-domain` | `kt_dev_db` |
-| **fablabos** | `pnpm dash:fablabos:local` | `.env.fablabos` | `.env.fablabos.local` | `../fablabos-backend-domain` | `fl_dev_db` |
-| **reddorada** | `pnpm dash:reddorada:local` | `.env.reddorada` | `.env.reddorada.local` | `../reddorada-backend-domain` | `rd_dev_db` |
-| **kitchntabs** | `pnpm dash:kitchntabs:local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `../kitchntabs-backend-domain` | `kt_dev_db` |
+| **vanexa** | `pnpm dash:start vanexa local` | `.env.vanexa` | `.env.vanexa.local` | `../vanexa-backend-domain` | `kt_dev_db` |
+| **fablabos** | `pnpm dash:start fablabos local` | `.env.fablabos` | `.env.fablabos.local` | `../fablabos-backend-domain` | `fl_dev_db` |
+| **reddorada** | `pnpm dash:start reddorada local` | `.env.reddorada` | `.env.reddorada.local` | `../reddorada-backend-domain` | `rd_dev_db` |
+| **kitchntabs** | `pnpm dash:start kitchntabs local` | `.env.kitchntabs` | `.env.kitchntabs.local` | `../kitchntabs-backend-domain` | `kt_dev_db` |
 
 ### Env file pairs
 
@@ -53,7 +53,7 @@ The stack runs **one domain at a time**. To switch:
 
 ```bash
 docker compose down -v               # wipe the Postgres volume (data is domain-specific)
-pnpm dash:fablabos:local            # restart with the new domain
+pnpm dash:start fablabos local      # restart with the new domain
 docker compose exec app php artisan migrate:fresh --seed
 ```
 
@@ -68,7 +68,7 @@ docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --b
 
 # 2. Start the stack (in dash-backend-docker)
 cd ../dash-backend-docker
-pnpm dash:vanexa:local   # or fablabos / reddorada / kitchntabs
+pnpm dash:start vanexa local   # or fablabos / reddorada / kitchntabs
 
 # 3. Pull mounted domain packages into the container
 docker compose exec app composer update --no-interaction
@@ -82,31 +82,15 @@ docker compose exec app php artisan migrate:fresh --seed
 ## pnpm scripts reference
 
 ```bash
-# Domain-specific launchers
-pnpm dash:vanexa:local       # vanexa — local dev
-pnpm dash:vanexa:tunnel      # vanexa — with Cloudflare tunnel
-pnpm dash:vanexa:production  # vanexa — production image
-
-pnpm dash:fablabos:local
-pnpm dash:fablabos:tunnel
-pnpm dash:fablabos:production
-
-pnpm dash:reddorada:local
-pnpm dash:reddorada:tunnel
-pnpm dash:reddorada:production
-
-pnpm dash:kitchntabs:local
-pnpm dash:kitchntabs:tunnel
-pnpm dash:kitchntabs:production
-
-# Generic launcher — no default project is baked in, always pass one explicitly
-pnpm dash:start -- <project> <environment>
+# Launcher — no default project is baked in, always pass one explicitly
+pnpm dash:start <project> <environment>
+# examples:
+pnpm dash:start vanexa local
+pnpm dash:start fablabos tunnel
+pnpm dash:start kitchntabs production
 
 # Tunnel only (stack already running)
-pnpm cloudflare:tunnel:vanexa
-pnpm cloudflare:tunnel:fablabos
-pnpm cloudflare:tunnel:reddorada
-pnpm cloudflare:tunnel:kitchntabs
+pnpm cloudflare:tunnel --env-file .env.<project>
 
 # API docs
 pnpm docs:generate
@@ -279,7 +263,7 @@ NORMAL_USER_PASSWORD=...
 
 ```bash
 docker compose down -v
-pnpm dash:<domain>:local
+pnpm dash:start <domain> local
 ```
 
 ### Step 6 — Run migrations and seed
@@ -305,7 +289,7 @@ docker compose exec app php artisan migrate:fresh --seed
 Set `CF_TUNNEL_HOSTNAME` and `CF_TUNNEL_TOKEN` in `.env.<domain>`, then:
 
 ```bash
-pnpm cloudflare:tunnel:<domain>
+pnpm cloudflare:tunnel --env-file .env.<domain>
 ```
 
 ### Multi-hostname mode (api-dev + ws-dev)
@@ -346,9 +330,9 @@ REVERB_SCHEME=https
 **Run:**
 
 ```bash
-pnpm dash:<domain>:tunnel
+pnpm dash:start <domain> tunnel
 # or, if the stack is already running:
-pnpm cloudflare:tunnel:<domain>
+pnpm cloudflare:tunnel --env-file .env.<domain>
 ```
 
 What the script does in multi-route mode:
@@ -439,7 +423,7 @@ layer and the domain is not mounted. Copy the `create_<table>` migration from th
 `.env.<domain>.local`, the app can't connect. Align both files, then:
 
 ```bash
-docker compose down -v && pnpm dash:<domain>:local
+docker compose down -v && pnpm dash:start <domain> local
 ```
 
 ### PostgreSQL port not listening on macOS host
@@ -481,7 +465,7 @@ in the domain test and move the file to mirror the new namespace.
 
 ```bash
 # Start / stop / restart
-pnpm dash:<domain>:local         # preferred — sets --env-file automatically
+pnpm dash:start <domain> local   # preferred — sets --env-file automatically
 docker compose up -d             # manual (requires ENV_FILE exported or set in shell)
 docker compose down
 docker compose down -v           # also wipes volumes

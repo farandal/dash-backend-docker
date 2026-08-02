@@ -40,6 +40,16 @@ Used by external Redis clients and debugging tools.
 - SMTP host port: `DBI_FORWARD_MAILHOG_PORT`
 - Web UI host port: `DBI_FORWARD_MAILHOG_DASHBOARD_PORT`
 
+### API docs port
+
+- Host port: `DBI_API_DOCS_PORT`
+- Container port: `80` (nginx serving generated OpenAPI docs)
+
+Defaults to `18010` in `docker-compose.yml` when unset. Because `dash-backend-docker` is a
+shared framework repo checked out separately per client workspace, two workspaces running at
+the same time (e.g. a different domain's checkout) will collide on this port unless each
+`.env.<project>` sets its own `DBI_API_DOCS_PORT` explicitly.
+
 ## Key environment variables
 
 The local stack is configured through two env files:
@@ -132,13 +142,13 @@ cp .env.local.example .env.<project>.local
 5. Start the stack:
 
 ```bash
-pnpm dash:<project>:local
+pnpm dash:start <project> local
 ```
 
 If your project name is `vanexa`, the command is:
 
 ```bash
-pnpm dash:vanexa:local
+pnpm dash:start vanexa local
 ```
 
 ## Verify after startup
