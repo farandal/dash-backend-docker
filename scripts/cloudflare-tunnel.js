@@ -292,8 +292,27 @@ async function pushTunnelIngressConfig({ apiToken, accountId, tunnelId, routes }
     'Content-Type': 'application/json',
   };
 
-  const ingress = routes.map((route) => ({ hostname: route.hostname, service: route.service }));
-  ingress.push({ service: 'http_status:404' });
+  // Merge with whatever is already on the tunnel instead of overwriting it —
+  // frontend apps (kitchntabs-frontend/scripts/cloudflare-tunnel-route.js) add
+  // their own hostname routes to this same named tunnel independently, one
+  // app at a time. A blind PUT here would silently drop every route this
+  // script doesn't know about (system-dev, app-dev, web-dev, ...) each time
+  // the backend starts.
+  const current = await axios.get(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`,
+    { headers }
+  );
+  const existingIngress = current.data?.result?.config?.ingress || [];
+  const ourHostnames = new Set(routes.map((route) => route.hostname));
+  const otherHostnameRules = existingIngress.filter(
+    (rule) => rule.hostname && !ourHostnames.has(rule.hostname)
+  );
+
+  const ingress = [
+    ...otherHostnameRules,
+    ...routes.map((route) => ({ hostname: route.hostname, service: route.service })),
+    { service: 'http_status:404' },
+  ];
 
   const resp = await axios.put(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`,
@@ -308,6 +327,12 @@ async function pushTunnelIngressConfig({ apiToken, accountId, tunnelId, routes }
   console.log('Pushed tunnel ingress configuration:');
   for (const route of routes) {
     console.log(`  ${route.hostname}  ->  ${route.service}`);
+  }
+  if (otherHostnameRules.length > 0) {
+    console.log(`Preserved ${otherHostnameRules.length} other hostname route(s) already on this tunnel:`);
+    for (const rule of otherHostnameRules) {
+      console.log(`  ${rule.hostname}  ->  ${rule.service}`);
+    }
   }
 }
 

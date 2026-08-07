@@ -12,6 +12,12 @@ if (!project) {
 const environment = process.argv[3] || process.env.DASH_ENV || "local";
 const isWindows = process.platform === "win32";
 
+// Off by default - `php artisan test` used to run unconditionally on every
+// dash:start and, absent test-database isolation, could wipe real dev data
+// (see run-local-mac.sh / run-local.ps1 for the actual guard). Anywhere in
+// the remaining args, e.g. `pnpm dash:start vanexa tunnel --tests`.
+const runTests = process.argv.slice(4).includes("--tests") || process.env.DASH_RUN_TESTS === "1";
+
 const command = isWindows ? "powershell" : "bash";
 const args = isWindows
   ? [
@@ -24,11 +30,13 @@ const args = isWindows
       project,
       "-Environment",
       environment,
+      ...(runTests ? ["-Tests"] : []),
     ]
-  : ["./scripts/run-local-mac.sh", project, environment];
+  : ["./scripts/run-local-mac.sh", project, environment, ...(runTests ? ["--tests"] : [])];
 
 console.log(`Starting local stack for project: ${project} (environment: ${environment})`);
 console.log(`Launcher platform: ${isWindows ? "windows" : "unix"}`);
+console.log(`Tests: ${runTests ? "will run (isolated test database)" : "skipped by default - pass --tests to run them"}`);
 
 const result = spawnSync(command, args, {
   stdio: "inherit",
