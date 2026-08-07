@@ -7,6 +7,7 @@ env.*
 !.env.example
 !.env.local.example
 !env.local.example
+.env-backup*.zip
 
 # Generated documentation and test reports
 /docs/api-docs/
