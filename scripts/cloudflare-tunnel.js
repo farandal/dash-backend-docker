@@ -5,6 +5,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const readline = require('readline');
 const { spawn, spawnSync } = require('child_process');
 const axios = require('axios');
@@ -20,7 +21,7 @@ function usage() {
 
 Examples:
   ./scripts/cloudflare-tunnel.sh
-  node ./scripts/cloudflare-tunnel.js --hostname dev-local-api.kitchntabs.com
+  node ./scripts/cloudflare-tunnel.js --hostname dev-local-api.vanexa.com
   node ./scripts/cloudflare-tunnel.js --env-file .env --no-update-env
 
 Behavior:
@@ -35,13 +36,20 @@ Optional DNS API automation:
     selected hostname before starting the tunnel.
   - CF_TUNNEL_CNAME_TARGET is optional; if omitted, it is derived from the tunnel token.
 
-Multi-route mode (multiple hostnames on one tunnel):
-  - Set CF_TUNNEL_HOSTNAME_<SLOT> + CF_TUNNEL_LOCAL_<SLOT> pairs (slots: API, WS, WEB, SYSTEM).
-    Example: CF_TUNNEL_HOSTNAME_API=api-dev.kitchntabs.com / CF_TUNNEL_LOCAL_API=http://localhost:25000
-  - Takes precedence over CF_TUNNEL_HOSTNAME / --hostname when any slot is configured.
-  - Requires CF_API_TOKEN + CF_ACCOUNT_ID + a tunnel token (CF_TUNNEL_TOKEN or CF_TUNNEL_TOKEN_FILE).
-  - Pushes ingress rules to Cloudflare's remotely-managed tunnel config via the API and creates/updates a
-    DNS CNAME for each configured hostname.
+Multi-hostname routing (one named tunnel, several public hostnames):
+  - Set CF_TUNNEL_HOSTNAME_<SLOT> + CF_TUNNEL_LOCAL_<SLOT> pairs, where <SLOT> is one of:
+    API, WS, WEB, SYSTEM (e.g. CF_TUNNEL_HOSTNAME_API=api-dev.vanexa.com,
+    CF_TUNNEL_LOCAL_API=http://localhost:25000).
+  - When at least one CF_TUNNEL_HOSTNAME_<SLOT> is set, the script switches to multi-route mode:
+    it pushes ingress rules to the named tunnel via the Cloudflare API
+    (PUT /accounts/{account}/cfd_tunnel/{tunnel}/configurations), creates a CNAME for each
+    hostname, and runs cloudflared without --url so it serves all configured hostnames at once.
+  - Multi-route mode requires CF_API_TOKEN and CF_ACCOUNT_ID — there is no quick-tunnel fallback
+    for it, since a quick tunnel can only ever forward a single hostname.
+  - If CF_TUNNEL_TOKEN / CF_TUNNEL_TOKEN_FILE are not set, the script creates (or looks up, by
+    name) a named tunnel via the Cloudflare API itself — no dashboard step required — and saves
+    the resulting token back into the env file as CF_TUNNEL_TOKEN. Set CF_TUNNEL_NAME to control
+    the tunnel's name (default: dash-dev).
 `);
 }
 
@@ -227,6 +235,232 @@ async function ensureDnsRecord({ apiToken, zoneName, zoneId, hostName, cnameTarg
   console.log(`Updated DNS CNAME: ${updated?.name} -> ${updated?.content}`);
 }
 
+const ROUTE_SLOTS = ['API', 'WS', 'WEB', 'SYSTEM'];
+
+function collectMultiRoutes(values) {
+  const routes = [];
+
+  for (const slot of ROUTE_SLOTS) {
+    const hostname = (values[`CF_TUNNEL_HOSTNAME_${slot}`] || '').trim();
+    const service = (values[`CF_TUNNEL_LOCAL_${slot}`] || '').trim();
+
+    if (!hostname) {
+      continue;
+    }
+
+    if (!service) {
+      console.warn(`CF_TUNNEL_HOSTNAME_${slot} is set but CF_TUNNEL_LOCAL_${slot} is empty — skipping ${slot}.`);
+      continue;
+    }
+
+    routes.push({ slot, hostname, service });
+  }
+
+  return routes;
+}
+
+function materializeTunnelToken(tunnelToken, tunnelTokenFile) {
+  if (!tunnelToken) {
+    return tunnelTokenFile;
+  }
+
+  const tempTokenFile = path.join(os.tmpdir(), `cf-tunnel-token-${Date.now()}.txt`);
+  fs.writeFileSync(tempTokenFile, tunnelToken, 'utf8');
+
+  const cleanup = () => {
+    if (fs.existsSync(tempTokenFile)) {
+      fs.unlinkSync(tempTokenFile);
+    }
+  };
+
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(143);
+  });
+
+  return tempTokenFile;
+}
+
+async function pushTunnelIngressConfig({ apiToken, accountId, tunnelId, routes }) {
+  const headers = {
+    Authorization: `Bearer ${apiToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Merge with whatever is already on the tunnel instead of overwriting it —
+  // frontend apps (kitchntabs-frontend/scripts/cloudflare-tunnel-route.js) add
+  // their own hostname routes to this same named tunnel independently, one
+  // app at a time. A blind PUT here would silently drop every route this
+  // script doesn't know about (system-dev, app-dev, web-dev, ...) each time
+  // the backend starts.
+  const current = await axios.get(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`,
+    { headers }
+  );
+  const existingIngress = current.data?.result?.config?.ingress || [];
+  const ourHostnames = new Set(routes.map((route) => route.hostname));
+  const otherHostnameRules = existingIngress.filter(
+    (rule) => rule.hostname && !ourHostnames.has(rule.hostname)
+  );
+
+  const ingress = [
+    ...otherHostnameRules,
+    ...routes.map((route) => ({ hostname: route.hostname, service: route.service })),
+    { service: 'http_status:404' },
+  ];
+
+  const resp = await axios.put(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`,
+    { config: { ingress } },
+    { headers }
+  );
+
+  if (!resp.data?.success) {
+    throw new Error(`Failed to push tunnel ingress config: ${JSON.stringify(resp.data?.errors)}`);
+  }
+
+  console.log('Pushed tunnel ingress configuration:');
+  for (const route of routes) {
+    console.log(`  ${route.hostname}  ->  ${route.service}`);
+  }
+  if (otherHostnameRules.length > 0) {
+    console.log(`Preserved ${otherHostnameRules.length} other hostname route(s) already on this tunnel:`);
+    for (const rule of otherHostnameRules) {
+      console.log(`  ${rule.hostname}  ->  ${rule.service}`);
+    }
+  }
+}
+
+async function ensureNamedTunnel({ apiToken, accountId, tunnelName }) {
+  const headers = {
+    Authorization: `Bearer ${apiToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  const listResp = await axios.get(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel`,
+    { headers, params: { name: tunnelName, is_deleted: false } }
+  );
+
+  let tunnel = (listResp.data?.result || [])[0];
+
+  if (!tunnel) {
+    const tunnelSecret = crypto.randomBytes(32).toString('base64');
+    const createResp = await axios.post(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel`,
+      { name: tunnelName, config_src: 'cloudflare', tunnel_secret: tunnelSecret },
+      { headers }
+    );
+
+    if (!createResp.data?.success) {
+      throw new Error(`Failed to create Cloudflare tunnel "${tunnelName}": ${JSON.stringify(createResp.data?.errors)}`);
+    }
+
+    tunnel = createResp.data.result;
+    console.log(`Created named Cloudflare tunnel "${tunnelName}" (${tunnel.id}).`);
+  } else {
+    console.log(`Using existing named Cloudflare tunnel "${tunnelName}" (${tunnel.id}).`);
+  }
+
+  const tokenResp = await axios.get(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnel.id}/token`,
+    { headers }
+  );
+
+  if (!tokenResp.data?.success || !tokenResp.data?.result) {
+    throw new Error(
+      `Failed to fetch connector token for tunnel "${tunnelName}": ${JSON.stringify(tokenResp.data?.errors)}`
+    );
+  }
+
+  return { tunnelId: tunnel.id, token: tokenResp.data.result };
+}
+
+async function runMultiRouteTunnel({ parsed, routes }) {
+  const apiToken = parsed.values.CF_API_TOKEN || '';
+  const accountId = parsed.values.CF_ACCOUNT_ID || '';
+  const zoneName = parsed.values.CF_ZONE_NAME || '';
+  const zoneId = parsed.values.CF_ZONE_ID || '';
+  const tunnelTokenFile = parsed.values.CF_TUNNEL_TOKEN_FILE || '';
+  let tunnelToken = parsed.values.CF_TUNNEL_TOKEN || parsed.values.CLOUDFLARE_TUNNEL_TOKEN || '';
+
+  if (!apiToken || !accountId) {
+    console.error('Multi-hostname tunnel routing requires CF_API_TOKEN and CF_ACCOUNT_ID');
+    console.error('(used to create/look up the named tunnel and push ingress rules via the Cloudflare API).');
+    process.exit(1);
+  }
+
+  let tunnelId = '';
+
+  if (!tunnelToken && !tunnelTokenFile) {
+    const tunnelName = parsed.values.CF_TUNNEL_NAME || 'dash-dev';
+    console.log(`No CF_TUNNEL_TOKEN configured — creating/looking up named tunnel "${tunnelName}" via the Cloudflare API.`);
+    const created = await ensureNamedTunnel({ apiToken, accountId, tunnelName });
+    tunnelId = created.tunnelId;
+    tunnelToken = created.token;
+
+    if (updateEnv) {
+      writeUpdatedEnv(envFile, parsed.lines, 'CF_TUNNEL_TOKEN', tunnelToken);
+      console.log(`Saved CF_TUNNEL_TOKEN to ${envFile}.`);
+    }
+  }
+
+  const cnameTarget = tunnelId
+    ? `${tunnelId}.cfargotunnel.com`
+    : resolveCnameTarget(parsed.values, tunnelToken, tunnelTokenFile);
+
+  if (!cnameTarget) {
+    console.error('Could not determine the tunnel id from CF_TUNNEL_TOKEN / CF_TUNNEL_TOKEN_FILE.');
+    process.exit(1);
+  }
+  if (!tunnelId) {
+    tunnelId = cnameTarget.replace('.cfargotunnel.com', '');
+  }
+
+  console.log(`Configuring named tunnel ${tunnelId} with ${routes.length} hostname route(s):`);
+  for (const route of routes) {
+    console.log(`  ${route.hostname}  ->  ${route.service}`);
+  }
+
+  await pushTunnelIngressConfig({ apiToken, accountId, tunnelId, routes });
+
+  if (zoneId || zoneName) {
+    for (const route of routes) {
+      try {
+        await ensureDnsRecord({ apiToken, zoneName, zoneId, hostName: route.hostname, cnameTarget });
+      } catch (err) {
+        const detail = err.response?.data || err.message;
+        console.error(`Failed to ensure DNS CNAME for ${route.hostname}:`, detail);
+      }
+    }
+  } else {
+    console.warn('CF_ZONE_ID/CF_ZONE_NAME not set — skipping DNS automation. Ensure CNAME records exist for:');
+    for (const route of routes) {
+      console.warn(`  ${route.hostname} -> ${cnameTarget}`);
+    }
+  }
+
+  for (const route of routes) {
+    announceEndpoint(`https://${route.hostname}  ->  ${route.service}`);
+  }
+
+  const tokenFileToUse = materializeTunnelToken(tunnelToken, tunnelTokenFile);
+
+  runNamedTunnel({
+    tokenFileToUse,
+    localUrl: null,
+    fallbackEnabled: false,
+    fallbackThreshold: Infinity,
+    fallbackWindowMs: Infinity,
+    onFallbackQuickUrl: () => {},
+  });
+}
+
 function writeUpdatedEnv(filePath, lines, key, value) {
   const content = upsertEnvValue(lines, key, value);
   fs.writeFileSync(filePath, content, 'utf8');
@@ -264,7 +498,12 @@ function decodeTunnelIdFromToken(token) {
   }
 }
 
-function resolveTunnelId(tunnelToken, tunnelTokenFile) {
+function resolveCnameTarget(parsedValues, tunnelToken, tunnelTokenFile) {
+  const explicit = parsedValues.CF_TUNNEL_CNAME_TARGET || parsedValues.CF_TUNNEL_HOSTNAME_TARGET || '';
+  if (explicit) {
+    return explicit;
+  }
+
   const tokenCandidates = [];
   if (tunnelToken) {
     tokenCandidates.push(tunnelToken);
@@ -284,56 +523,11 @@ function resolveTunnelId(tunnelToken, tunnelTokenFile) {
   for (const candidate of tokenCandidates) {
     const tunnelId = decodeTunnelIdFromToken(candidate);
     if (tunnelId) {
-      return tunnelId;
+      return `${tunnelId}.cfargotunnel.com`;
     }
   }
 
   return '';
-}
-
-function resolveCnameTarget(parsedValues, tunnelToken, tunnelTokenFile) {
-  const explicit = parsedValues.CF_TUNNEL_CNAME_TARGET || parsedValues.CF_TUNNEL_HOSTNAME_TARGET || '';
-  if (explicit) {
-    return explicit;
-  }
-
-  const tunnelId = resolveTunnelId(tunnelToken, tunnelTokenFile);
-  return tunnelId ? `${tunnelId}.cfargotunnel.com` : '';
-}
-
-function parseMultiRoutes(values) {
-  const slots = ['API', 'WS', 'WEB', 'SYSTEM'];
-  const routes = [];
-
-  for (const slot of slots) {
-    const hostname = values[`CF_TUNNEL_HOSTNAME_${slot}`] || '';
-    const localUrl = values[`CF_TUNNEL_LOCAL_${slot}`] || '';
-
-    if (hostname && localUrl) {
-      routes.push({ slot, hostname, localUrl });
-    } else if (hostname && !localUrl) {
-      console.warn(`CF_TUNNEL_HOSTNAME_${slot} is set but CF_TUNNEL_LOCAL_${slot} is missing; skipping.`);
-    }
-  }
-
-  return routes;
-}
-
-async function pushIngressConfig({ apiToken, accountId, tunnelId, routes }) {
-  const headers = {
-    Authorization: `Bearer ${apiToken}`,
-    'Content-Type': 'application/json',
-  };
-
-  const ingress = routes.map((route) => ({
-    hostname: route.hostname,
-    service: route.localUrl,
-  }));
-  ingress.push({ service: 'http_status:404' });
-
-  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`;
-  const resp = await axios.put(url, { config: { ingress } }, { headers });
-  return resp.data?.result;
 }
 
 function runNamedTunnel({
@@ -344,7 +538,12 @@ function runNamedTunnel({
   fallbackWindowMs,
   onFallbackQuickUrl,
 }) {
-  const proc = spawn('cloudflared', ['tunnel', 'run', '--token-file', tokenFileToUse, '--url', localUrl], {
+  const args = ['tunnel', 'run', '--token-file', tokenFileToUse];
+  if (localUrl) {
+    args.push('--url', localUrl);
+  }
+
+  const proc = spawn('cloudflared', args, {
     stdio: ['inherit', 'pipe', 'pipe'],
   });
 
@@ -409,21 +608,6 @@ function runNamedTunnel({
   });
 }
 
-function runRemoteManagedTunnel({ tokenFileToUse }) {
-  // No --url: ingress routing is fetched from the Cloudflare edge (pushed via pushIngressConfig).
-  const proc = spawn('cloudflared', ['tunnel', 'run', '--token-file', tokenFileToUse], {
-    stdio: 'inherit',
-  });
-
-  proc.on('exit', (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(code ?? 0);
-  });
-}
-
 function attachLineReader(stream, onLine, mirror) {
   const rl = readline.createInterface({ input: stream });
   rl.on('line', (line) => {
@@ -478,101 +662,19 @@ async function main() {
   }
 
   const parsed = parseEnvFile(envFile);
+
+  const multiRoutes = collectMultiRoutes(parsed.values);
+  if (multiRoutes.length > 0) {
+    await runMultiRouteTunnel({ parsed, routes: multiRoutes });
+    return;
+  }
+
   const appPort = parsed.values.APP_PORT || '8000';
   const hostnameEnv = parsed.values.CF_TUNNEL_HOSTNAME || '';
   const hostname = hostnameArg || hostnameEnv;
   const tunnelTokenFile = parsed.values.CF_TUNNEL_TOKEN_FILE || '';
   const tunnelToken =
     parsed.values.CF_TUNNEL_TOKEN || parsed.values.CLOUDFLARE_TUNNEL_TOKEN || '';
-
-  const multiRoutes = parseMultiRoutes(parsed.values);
-
-  if (multiRoutes.length > 0) {
-    console.log(`Multi-route mode: ${multiRoutes.length} hostname(s) configured.`);
-
-    const apiToken = parsed.values.CF_API_TOKEN || '';
-    const accountId = parsed.values.CF_ACCOUNT_ID || '';
-    const zoneName = parsed.values.CF_ZONE_NAME || '';
-    const zoneId = parsed.values.CF_ZONE_ID || '';
-
-    if (!apiToken || !accountId) {
-      console.error('Multi-route mode requires CF_API_TOKEN and CF_ACCOUNT_ID.');
-      process.exit(1);
-    }
-
-    if (!tunnelToken && !tunnelTokenFile) {
-      console.error('Multi-route mode requires CF_TUNNEL_TOKEN or CF_TUNNEL_TOKEN_FILE.');
-      process.exit(1);
-    }
-
-    const tunnelId = resolveTunnelId(tunnelToken, tunnelTokenFile);
-    if (!tunnelId) {
-      console.error('Could not determine tunnel id from CF_TUNNEL_TOKEN / CF_TUNNEL_TOKEN_FILE.');
-      process.exit(1);
-    }
-
-    if (zoneId || zoneName) {
-      const cnameTarget = `${tunnelId}.cfargotunnel.com`;
-      for (const route of multiRoutes) {
-        try {
-          await ensureDnsRecord({ apiToken, zoneName, zoneId, hostName: route.hostname, cnameTarget });
-        } catch (err) {
-          const detail = err.response?.data || err.message;
-          console.error(`Failed to ensure DNS CNAME for ${route.hostname}:`, detail);
-        }
-      }
-    } else {
-      console.warn('Multi-route DNS automation skipped: set CF_ZONE_ID or CF_ZONE_NAME.');
-    }
-
-    try {
-      await pushIngressConfig({ apiToken, accountId, tunnelId, routes: multiRoutes });
-      console.log('Pushed ingress configuration to Cloudflare:');
-      for (const route of multiRoutes) {
-        console.log(`  ${route.hostname} -> ${route.localUrl}`);
-      }
-    } catch (err) {
-      const detail = err.response?.data || err.message;
-      console.error('Failed to push ingress configuration:', detail);
-      process.exit(1);
-    }
-
-    let tokenFileToUse = tunnelTokenFile;
-    let tempTokenFile = '';
-
-    if (tunnelToken) {
-      tempTokenFile = path.join(os.tmpdir(), `cf-tunnel-token-${Date.now()}.txt`);
-      fs.writeFileSync(tempTokenFile, tunnelToken, 'utf8');
-      tokenFileToUse = tempTokenFile;
-
-      const cleanup = () => {
-        if (tempTokenFile && fs.existsSync(tempTokenFile)) {
-          fs.unlinkSync(tempTokenFile);
-        }
-      };
-
-      process.on('exit', cleanup);
-      process.on('SIGINT', () => {
-        cleanup();
-        process.exit(130);
-      });
-      process.on('SIGTERM', () => {
-        cleanup();
-        process.exit(143);
-      });
-    }
-
-    const primaryRoute = multiRoutes[0];
-    announceEndpoint(`https://${primaryRoute.hostname} (+${multiRoutes.length - 1} more route(s))`);
-
-    if (updateEnv) {
-      writeUpdatedEnv(envFile, parsed.lines, 'APP_URL', `https://${primaryRoute.hostname}`);
-      console.log(`Updated APP_URL in ${envFile} -> https://${primaryRoute.hostname}`);
-    }
-
-    runRemoteManagedTunnel({ tokenFileToUse });
-    return;
-  }
 
   const localUrl = `http://localhost:${appPort}`;
   const quicFallbackEnabled = !['0', 'false', 'no', 'off'].includes(
@@ -626,30 +728,7 @@ async function main() {
       return;
     }
 
-    let tokenFileToUse = tunnelTokenFile;
-    let tempTokenFile = '';
-
-    if (tunnelToken) {
-      tempTokenFile = path.join(os.tmpdir(), `cf-tunnel-token-${Date.now()}.txt`);
-      fs.writeFileSync(tempTokenFile, tunnelToken, 'utf8');
-      tokenFileToUse = tempTokenFile;
-
-      const cleanup = () => {
-        if (tempTokenFile && fs.existsSync(tempTokenFile)) {
-          fs.unlinkSync(tempTokenFile);
-        }
-      };
-
-      process.on('exit', cleanup);
-      process.on('SIGINT', () => {
-        cleanup();
-        process.exit(130);
-      });
-      process.on('SIGTERM', () => {
-        cleanup();
-        process.exit(143);
-      });
-    }
+    const tokenFileToUse = materializeTunnelToken(tunnelToken, tunnelTokenFile);
 
     if (updateEnv) {
       writeUpdatedEnv(envFile, parsed.lines, 'APP_URL', publicUrl);
@@ -678,7 +757,7 @@ async function main() {
   }
 
   console.log('No custom hostname configured. Falling back to quick tunnel URL.');
-  console.log(`Tip: set CF_TUNNEL_HOSTNAME=dev-local-api.kitchntabs.com in ${envFile} to use your custom domain.`);
+  console.log(`Tip: set CF_TUNNEL_HOSTNAME=dev-local-api.vanexa.com in ${envFile} to use your custom domain.`);
 
   let didUpdateEnv = false;
   runQuickTunnel(localUrl, (quickUrl) => {

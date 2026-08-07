@@ -22,56 +22,53 @@ Required on a fresh stack or after `docker compose down -v`.
 docker compose exec app php artisan migrate:fresh --seed
 ```
 
-### 3. Start Reverb (WebSocket server)
+### 3. Reverb and Horizon (already running)
 
-Must be running before any broadcast-dependent tests or manual WebSocket tests.
-
-```bash
-docker compose exec app php artisan reverb:start --debug
-```
-
-The `--debug` flag prints each connection, subscription, and event to stdout — useful during development.
-
-### 4. Start Horizon (queue worker)
-
-Must be running before any queue-dispatched jobs or notification delivery tests.
+The core image is always built from `Dockerfile.core.production`, which runs `supervisord`
+and auto-starts/auto-restarts both `reverb` and `horizon` at container boot (see
+`docker/app/custom-supervisor.conf`). You don't need to start them manually — just confirm
+they're up:
 
 ```bash
-docker compose exec app php artisan horizon
+docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf status
 ```
 
-### 5. Run the Core test suite
+If you need to restart either after a code change:
+
+```bash
+docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf restart reverb horizon
+```
+
+### 4. Run the Core test suite
 
 ```bash
 docker compose exec app php artisan test --testsuite=Core
 ```
 
-### 6. Run the Domain test suite
+### 5. Run the Domain test suite
 
 ```bash
 docker compose exec app php artisan test --testsuite=Domain
 ```
 
-### 7. Run Core tests with JUnit XML report (for CI)
+### 6. Run Core tests with JUnit XML report (for CI)
 
 The report is written to `./reports/` on the host (see Volumes section).
 
 ```bash
-docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml
+docker compose exec app php artisan test --testsuite=Core --log-junit /var/www/dash/reports/core_results.xml --no-ansi
 ```
 
 ---
 
-## Why Reverb and Horizon Must Be Started Before Tests
+## Why Reverb and Horizon Must Be Running Before Tests
 
-Several test cases assert that events were broadcast or that queued jobs completed. If Reverb or Horizon are not running when those tests execute, the assertions will fail or silently time out.
+Several test cases assert that events were broadcast or that queued jobs completed. If Reverb or Horizon are not running when those tests execute, the assertions will fail or silently time out. Both are supervisord-managed and start automatically at container boot — see "Reverb and Horizon (already running)" above if you need to check status or restart them.
 
 | Dependency | Required for |
 |---|---|
 | `reverb:start` | Broadcast event delivery, WebSocket channel tests |
 | `horizon` | Queued notification delivery, job-based side effects |
-
-Both processes are long-running and must be left running in a separate terminal while tests execute.
 
 ---
 
@@ -147,7 +144,7 @@ After restarting the stack, `storage/logs/laravel.log` will be readable from the
 Open the WebSocket test page in your browser:
 
 ```
-http://localhost:25000/ws
+http://localhost:25100/ws
 ```
 
 This page (served from `dash-backend/resources/views/websocket-test.blade.php`) connects to Reverb via Laravel Echo and subscribes to the `session` public channel. When a message is broadcast to that channel, it appears in the page UI in real time.
@@ -155,10 +152,10 @@ This page (served from `dash-backend/resources/views/websocket-test.blade.php`) 
 The browser connects to:
 
 ```
-ws://localhost:25001/app/mock_key
+ws://localhost:26001/app/mock_key
 ```
 
-> **Important — `REVERB_HOST` must be `localhost`:** `REVERB_SERVER_HOST=0.0.0.0` is the bind address Reverb listens on inside the container. `REVERB_HOST` is the address the browser uses to connect from outside. These are different. Setting `REVERB_HOST=0.0.0.0` causes the browser to attempt `ws://0.0.0.0:25001`, which always fails. `REVERB_HOST` must always be set to the hostname or IP reachable from the browser (`localhost` for local dev).
+> **Important — `REVERB_HOST` must be `localhost`:** `REVERB_SERVER_HOST=0.0.0.0` is the bind address Reverb listens on inside the container. `REVERB_HOST` is the address the browser uses to connect from outside. These are different. Setting `REVERB_HOST=0.0.0.0` causes the browser to attempt `ws://0.0.0.0:26001`, which always fails. `REVERB_HOST` must always be set to the hostname or IP reachable from the browser (`localhost` for local dev).
 
 ### API Trigger Routes
 
@@ -173,7 +170,7 @@ These routes are registered in `dash-backend/routes/api.php` and can be called w
 #### Example — trigger a public notification
 
 ```bash
-curl -X POST http://localhost:25000/api/ws/trigger
+curl -X POST http://localhost:25100/api/ws/trigger
 ```
 
 Expected response:
@@ -188,13 +185,13 @@ If this returns 500, check the logs: the most likely cause is the `pulse_entries
 
 ```bash
 # Replace 1 with a seeded user ID
-curl -X POST http://localhost:25000/api/ws/trigger/1
+curl -X POST http://localhost:25100/api/ws/trigger/1
 ```
 
 #### Example — trigger a tenant channel notification
 
 ```bash
-curl -X POST http://localhost:25000/api/ws/channel \
+curl -X POST http://localhost:25100/api/ws/channel \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{ "tenantId": 1, "roles": ["admin"] }'
@@ -235,7 +232,7 @@ Optionally set `PULSE_ENABLED=false` in `.env.local` to disable Pulse telemetry 
 
 ### Reverb port mismatch
 
-The container binds Reverb on `REVERB_SERVER_PORT=6001`. The host maps that to `DBI_REVERB_SERVER_PORT=25001` (in `.env`). The browser must connect to `REVERB_PORT=25001` (the host-side port). Ensure all three are consistent.
+The container binds Reverb on `REVERB_SERVER_PORT=6001`. The host maps that to `DBI_REVERB_SERVER_PORT=26001` (in `.env`). The browser must connect to `REVERB_PORT=26001` (the host-side port). Ensure all three are consistent.
 
 ### Tests fail with "broadcast driver not configured"
 

@@ -9,12 +9,18 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "${DBI_APP_PORT:-18000}:80"
-      - "${DBI_REVERB_SERVER_PORT:-25001}:${REVERB_SERVER_PORT:-25001}"
+      - "${DBI_REVERB_SERVER_PORT:-26001}:${REVERB_SERVER_PORT:-6001}"
     environment:
       WWWUSER: "${WWWUSER:-1000}"
       LARAVEL_SAIL: 1
       XDEBUG_MODE: "${SAIL_XDEBUG_MODE:-off}"
       XDEBUG_CONFIG: "${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}"
+      # Core image bakes ENV APP_ENV=production; a real container env var always
+      # beats whatever the mounted .env file says, so APP_ENV=local in
+      # .env.<project>.local/.tunnel was silently ignored without this override.
+      # This compose file is local-dev-only (real production deploys go through
+      # kitchntabs-ci-cdk/ECS, not docker-compose), so "local" is a safe default.
+      APP_ENV: "${APP_ENV:-local}"
       # Force pgsql driver — overrides any bootstrap/cache/config.php baked into image
       DB_CONNECTION: pgsql
       DB_HOST: pgsql
@@ -22,18 +28,47 @@ services:
       - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env"
       - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env.production"
       - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/dash/domain:delegated"
+      # Optional, config-only mount — distinct from domain/ above (which is the whole
+      # active domain's codebase). Layers multiple config sources on top of each other
+      # before the active domain's own domain/config/ gets final say. No-op (empty dir)
+      # unless DOMAIN_CONFIG_LAYERS_PATH is set — see domain-config-layers/README.md.
+      - "${DOMAIN_CONFIG_LAYERS_PATH:-./domain-config-layers}:/var/www/dash/domain-config-layers:delegated"
+      # Dev storage on the host so assets, logs, cache & sessions live on local disk
+      # (not baked inside the image). Folder is named after the domain project.
+      - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/dash/storage:delegated"
       - "dash-composer-cache:/.composer"
       - ./reports:/var/www/dash/reports
-  
-      # Mount essential Laravel directories for development
-      - "${STORAGE_PATH:-./storage/kitchntabs-backend-domain}:/var/www/dash/storage:delegated" 
+      # config/ is NOT mounted whole below, so keep these individual patched-file mounts.
+      - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/dash/config/firebase.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/dash/config/broadcasting.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/horizon.php:/var/www/dash/config/horizon.php:ro"
+      # Carries SKIP_EMAIL_VERIFICATION (and the signup defaults). Without this
+      # mount the container keeps the config/system.php baked into the image, so
+      # a newly added key reads as NULL no matter what the .env says — the same
+      # reason horizon.php above had to be listed individually.
+      - "${BACKEND_PATH:-../dash-backend}/config/system.php:/var/www/dash/config/system.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/phpunit.xml:/var/www/dash/phpunit.xml:ro"
+      # docker/ is NOT mounted whole below either — the entrypoint reads this nginx
+      # template (via envsubst) on every container start, so edits here take effect
+      # with a plain `docker compose restart app`, no image rebuild needed.
+      - "${BACKEND_PATH:-../dash-backend}/docker/nginx/api.nginx.conf:/var/www/dash/docker/nginx/api.nginx.conf:ro"
+      #
+      # --- Optional: mount dash-backend CORE SOURCE for local development ----------
+      # Edit core source on the host (../dash-backend) and changes apply live in the
+      # container — no image rebuild or `docker cp` needed. Read-write so artisan
+      # generators and bootstrap/cache work. Comment out this whole block to run
+      # purely from the baked image. NOTE: vendor/ and config/ deliberately stay
+      # baked (config/firebase.php is patched above); these supersede any per-file
+      # core mounts (e.g. routes/system.php, the SystemPaymentGateway feature files).
       - "${BACKEND_PATH:-../dash-backend}/app:/var/www/dash/app:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/config:/var/www/dash/config:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/dash/routes:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/dash/resources:delegated"
-      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/dash/tests:delegated"
       - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/dash/bootstrap:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/dash/lang:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/public:/var/www/dash/public:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/resources:/var/www/dash/resources:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/routes:/var/www/dash/routes:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/tests:/var/www/dash/tests:delegated"
+      # ----------------------------------------------------------------------------
     networks:
       - dash
     depends_on:
@@ -44,8 +79,21 @@ services:
       redis:
         condition: service_started
 
+  api_docs:
+    image: nginx:alpine
+    container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_api_docs"
+    restart: unless-stopped
+    ports:
+      - "${DBI_API_DOCS_PORT:-18010}:80"
+    volumes:
+      - "./docs/api-docs:/usr/share/nginx/html:ro"
+    depends_on:
+      - app
+    networks:
+      - dash
+
   pgsql:
-    image: "postgres:17-alpine"
+    image: "postgres:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql"
     ports:
       - "${DBI_FORWARD_DB_PORT:-15432}:5432"
@@ -56,8 +104,17 @@ services:
       POSTGRES_USER: "${DB_USERNAME:-sail}"
       POSTGRES_PASSWORD: "${DB_PASSWORD:-secret}"
     volumes:
-      - "${DB_STORAGE_PATH:-./storage/kitchntabs-backend-domain/pgsql-data}:/var/lib/postgresql/data"
-      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
+      # Bind mount (not a named volume) so the DB survives `docker compose down -v`
+      # and lives under this project's storage/ tree instead of Docker's opaque
+      # volume storage, which a Docker Desktop reset/cleanup can wipe with no
+      # `docker compose` command involved at all. Set per-project via DB_STORAGE_PATH
+      # in .env.<project> (e.g. ./storage/<project>-backend-domain/pgsql-data).
+      # Mounted at the /var/lib/postgresql PARENT dir, not .../data — the official
+      # postgres image's real PGDATA path varies by major version (e.g. pg18 uses
+      # /var/lib/postgresql/18/docker, not /var/lib/postgresql/data), so mounting
+      # the parent covers whatever internal layout the image actually uses.
+      - "${DB_STORAGE_PATH:-./storage/pgsql-data}:/var/lib/postgresql:delegated"
+      - "${BACKEND_PATH:-../dash-backend}/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
     healthcheck:
@@ -66,7 +123,7 @@ services:
       timeout: 5s
 
   pgsql_setup:
-    image: "postgres:17-alpine"
+    image: "postgres:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql_setup"
     depends_on:
       pgsql:
@@ -84,7 +141,7 @@ services:
       - -lc
       - /docker-entrypoint-initdb.d/10-create-testing-db.sh && tail -f /dev/null
     volumes:
-      - "../dash-backend/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
+      - "${BACKEND_PATH:-../dash-backend}/database/create-testing-db.sh:/docker-entrypoint-initdb.d/10-create-testing-db.sh:ro"
     networks:
       - dash
     healthcheck:

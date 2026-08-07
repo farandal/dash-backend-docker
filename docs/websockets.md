@@ -169,14 +169,14 @@ To use a custom event name, pass `type: 'my_event'` to `AppNotificationBuilder::
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | `REVERB_SERVER_HOST` | `0.0.0.0` | Interface Reverb listens on inside the container |
-| `REVERB_SERVER_PORT` | `25001` | Port Reverb listens on inside the container |
+| `REVERB_SERVER_PORT` | `6001` | Port Reverb listens on inside the container |
 
 ### Reverb Public (connect address — used by clients and broadcasting driver)
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | `REVERB_HOST` | `localhost` | Hostname browsers and Horizon use to reach Reverb |
-| `REVERB_PORT` | `25001` | Port browsers and Horizon use |
+| `REVERB_PORT` | `26001` | Port browsers and Horizon use |
 | `REVERB_SCHEME` | `http` | `https` in production |
 
 > **Critical distinction:** `config/broadcasting.php` (the Pusher HTTP client Horizon uses to POST events) must use `REVERB_HOST`/`REVERB_PORT`, **not** `REVERB_SERVER_HOST`/`REVERB_SERVER_PORT`. The server host `0.0.0.0` is a valid bind address but not a valid TCP connect target.
@@ -186,11 +186,11 @@ To use a custom event name, pass `type: 'my_event'` to `AppNotificationBuilder::
 ```yaml
 # docker-compose.yml
 ports:
-  - "${DBI_REVERB_SERVER_PORT:-25001}:${REVERB_SERVER_PORT:-25001}"
+  - "${DBI_REVERB_SERVER_PORT:-26001}:${REVERB_SERVER_PORT:-6001}"
   #   ^^^^^ host port                  ^^^^^ container port (must match REVERB_SERVER_PORT)
 ```
 
-Both sides must match `REVERB_SERVER_PORT`. Using a different container port (e.g. `6001`) while Reverb binds on `25001` means the mapped traffic never reaches Reverb.
+Both sides must match `REVERB_SERVER_PORT`. In this local configuration, `REVERB_SERVER_PORT=6001`, so the right-hand side of the `ports` mapping must also be `6001` while the host side may be a different port such as `26001`.
 
 ---
 
@@ -222,27 +222,21 @@ AppNotificationBuilder::send(
 ### Start the stack
 
 ```bash
-pnpm dash:start          # full stack: DB + Redis + app + migrations
-# or
-pnpm dash:start:local    # same, explicit local env
+pnpm dash:<project>:local   # full stack: DB + Redis + app + migrations
 ```
 
-### Start Reverb (separate terminal)
+Reverb and Horizon are **not** started manually — the core image is always built from
+`Dockerfile.core.production`, which runs `supervisord` and auto-starts/auto-restarts both
+(see `docker/app/custom-supervisor.conf`). To restart them after a code change:
 
 ```bash
-docker compose exec app php artisan reverb:start --debug
-```
-
-### Start Horizon (separate terminal)
-
-```bash
-docker compose exec app php artisan horizon
+docker compose exec app supervisorctl -c /etc/supervisor/supervisord.conf restart reverb horizon
 ```
 
 ### Test page
 
 ```
-http://localhost:25000/ws
+http://localhost:25100/ws
 ```
 
 Buttons:
@@ -278,7 +272,7 @@ docker compose exec app php artisan horizon:terminate
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Frontend connects but never receives messages | Broadcasting driver posting to `0.0.0.0` (unreachable) | `broadcasting.php` reverb options `host` must use `REVERB_HOST`, not `REVERB_SERVER_HOST` |
-| Frontend `ws://0.0.0.0:25001` connection fails | Blade reads `reverb.servers.reverb.host` (bind addr) | Use `reverb.servers.reverb.hostname` (maps to `REVERB_HOST`) |
+| Frontend `ws://0.0.0.0:26001` connection fails | Blade reads `reverb.servers.reverb.host` (bind addr) | Use `reverb.servers.reverb.hostname` (maps to `REVERB_HOST`) |
 | Reverb logs no incoming events, Horizon shows DONE | Port mismatch in docker-compose | Container port in `ports:` mapping must equal `REVERB_SERVER_PORT` |
 | Public notification goes to wrong channel | Builder ignores notification class `scope` config | Fixed in `AppNotificationBuilder` — class-declared `scope` now overrides the default `"channel"` |
 | Private/channel messages not visible in test page | No listener subscribed | Enter userId/tenantId **before** clicking send — the page auto-subscribes on input change |
