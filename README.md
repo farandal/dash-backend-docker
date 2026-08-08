@@ -42,6 +42,10 @@ env.domain.local.example  →  .env.<domain>.local  (Laravel app level)
 - **`.env.<domain>.tunnel`** — variant of the app env for Cloudflare tunnel mode. Overrides
   `APP_URL`, `REVERB_HOST`, `REVERB_PORT`, and `REVERB_SCHEME` for the public hostnames
   (`api-dev.<domain>.com`, `ws-dev.<domain>.com`).
+- **`.env.<domain>.staging`** — same idea as `.env.<domain>.tunnel`, but for the staging
+  hostnames (`api-staging.<domain>.com`, `ws-staging.<domain>.com`). Any environment suffix
+  works this way — see [Cloudflare tunnel](#cloudflare-tunnel) for how the tunnel picks up the
+  matching hostnames per environment.
 
 > **Critical:** `DB_DATABASE`, `DB_USERNAME`, and `DB_PASSWORD` must be **identical** in
 > `.env.<domain>` (used to initialize the Postgres container) and `.env.<domain>.local`
@@ -83,14 +87,15 @@ docker compose exec app php artisan migrate:fresh --seed
 
 ```bash
 # Launcher — no default project is baked in, always pass one explicitly
-pnpm dash:start <project> <environment>
+pnpm dash:start <project> <environment> [--tunnel] [--tests]
 # examples:
 pnpm dash:start vanexa local
-pnpm dash:start fablabos tunnel
+pnpm dash:start fablabos tunnel                  # --tunnel implied by the "tunnel" environment
+pnpm dash:start kitchntabs staging --tunnel      # any other environment needs --tunnel explicit
 pnpm dash:start kitchntabs production
 
 # Tunnel only (stack already running)
-pnpm cloudflare:tunnel --env-file .env.<project>
+pnpm cloudflare:tunnel --env-file .env.<project> --env-suffix <ENVIRONMENT>
 
 # API docs
 pnpm docs:generate
@@ -100,10 +105,15 @@ pnpm docs:start
 You can also call the cross-platform launcher directly:
 
 ```bash
-node scripts/run-local.mjs <project> <environment>
+node scripts/run-local.mjs <project> <environment> [--tunnel]
 # <project>     : vanexa | fablabos | reddorada | kitchntabs
-# <environment> : local | tunnel | production  (or any suffix matching .env.<domain>.<suffix>)
+# <environment> : local | tunnel | staging | production  (or any suffix matching .env.<domain>.<suffix>)
 ```
+
+`--tunnel` is independent of `<environment>` — it only controls whether the Cloudflare tunnel
+window opens, not which app env gets mounted. `<environment> == tunnel` still opens it
+automatically for backward compatibility; every other environment (including `staging`) needs
+`--tunnel` passed explicitly.
 
 ---
 
@@ -338,9 +348,36 @@ pnpm cloudflare:tunnel --env-file .env.<domain>
 What the script does in multi-route mode:
 1. Creates/looks up the named tunnel via the Cloudflare API and writes its token back to
    `.env.<domain>` as `CF_TUNNEL_TOKEN`.
-2. Pushes an ingress config (api-dev → local API, ws-dev → local Reverb, catch-all 404).
+2. Pushes an ingress config (api-dev → local API, ws-dev → local Reverb, catch-all 404),
+   **merged** with whatever hostnames are already on the tunnel rather than replacing them
+   wholesale — other environments' routes on the same named tunnel are untouched.
 3. Creates/updates proxied CNAMEs pointing at `<tunnel-id>.cfargotunnel.com`.
 4. Runs `cloudflared tunnel run --token-file ...` pulling the ingress rules just pushed.
+
+### Multiple environments on one named tunnel (dev, staging, ...)
+
+The same named tunnel (`CF_TUNNEL_NAME`) can serve more than one environment's hostnames at
+once, because ingress is merged rather than overwritten (see step 2 above). Rather than
+duplicating the whole `.env.<domain>` compose file per environment, add
+`_<SUFFIX>`-suffixed overrides for just the hostname slots that differ:
+
+```ini
+# base (used by the "tunnel" environment)
+CF_TUNNEL_HOSTNAME_API=api-dev.<domain>.com
+CF_TUNNEL_HOSTNAME_WS=ws-dev.<domain>.com
+
+# staging override — same local ports, different public hostname
+CF_TUNNEL_HOSTNAME_API_STAGING=api-staging.<domain>.com
+CF_TUNNEL_HOSTNAME_WS_STAGING=ws-staging.<domain>.com
+```
+
+`pnpm dash:start <domain> staging --tunnel` passes `--env-suffix STAGING` to
+`cloudflare-tunnel.js`, which prefers `CF_TUNNEL_HOSTNAME_<SLOT>_STAGING` /
+`CF_TUNNEL_LOCAL_<SLOT>_STAGING` over the base `CF_TUNNEL_HOSTNAME_<SLOT>` /
+`CF_TUNNEL_LOCAL_<SLOT>` vars when the suffixed ones are set, falling back to the base vars
+otherwise (so environments without an override, like `tunnel` itself, keep working unchanged).
+`CF_TUNNEL_LOCAL_<SLOT>` usually doesn't need a suffixed override — it's the same local
+Docker-mapped port regardless of which public hostname routes to it.
 
 QUIC fallback tuning:
 

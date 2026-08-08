@@ -13,11 +13,12 @@ const axios = require('axios');
 let envFile = '.env';
 let hostnameArg = '';
 let updateEnv = true;
+let envSuffix = '';
 
 function usage() {
   console.log(`Usage:
-  ./scripts/cloudflare-tunnel.sh [--env-file FILE] [--hostname HOST] [--no-update-env]
-  node ./scripts/cloudflare-tunnel.js [--env-file FILE] [--hostname HOST] [--no-update-env]
+  ./scripts/cloudflare-tunnel.sh [--env-file FILE] [--hostname HOST] [--no-update-env] [--env-suffix SUFFIX]
+  node ./scripts/cloudflare-tunnel.js [--env-file FILE] [--hostname HOST] [--no-update-env] [--env-suffix SUFFIX]
 
 Examples:
   ./scripts/cloudflare-tunnel.sh
@@ -40,7 +41,15 @@ Multi-hostname routing (one named tunnel, several public hostnames):
   - Set CF_TUNNEL_HOSTNAME_<SLOT> + CF_TUNNEL_LOCAL_<SLOT> pairs, where <SLOT> is one of:
     API, WS, WEB, SYSTEM (e.g. CF_TUNNEL_HOSTNAME_API=api-dev.vanexa.com,
     CF_TUNNEL_LOCAL_API=http://localhost:25000).
-  - When at least one CF_TUNNEL_HOSTNAME_<SLOT> is set, the script switches to multi-route mode:
+  - --env-suffix SUFFIX (e.g. STAGING) makes each slot prefer
+    CF_TUNNEL_HOSTNAME_<SLOT>_<SUFFIX> / CF_TUNNEL_LOCAL_<SLOT>_<SUFFIX> over the base
+    CF_TUNNEL_HOSTNAME_<SLOT> / CF_TUNNEL_LOCAL_<SLOT> vars, falling back to the base vars when
+    the suffixed ones aren't set. This lets one compose-level env file carry hostnames for
+    several environments (dev, staging, ...) sharing the same local project/ports, without
+    a separate env file per environment. Routes are merged into the tunnel's existing ingress
+    (see pushTunnelIngressConfig), so running with a different suffix adds/updates only its own
+    hostnames and leaves other environments' routes on the same tunnel untouched.
+  - When at least one CF_TUNNEL_HOSTNAME_<SLOT>(_<SUFFIX>) is set, the script switches to multi-route mode:
     it pushes ingress rules to the named tunnel via the Cloudflare API
     (PUT /accounts/{account}/cfd_tunnel/{tunnel}/configurations), creates a CNAME for each
     hostname, and runs cloudflared without --url so it serves all configured hostnames at once.
@@ -78,6 +87,16 @@ function parseArgs(argv) {
 
     if (arg === '--no-update-env') {
       updateEnv = false;
+      continue;
+    }
+
+    if (arg === '--env-suffix') {
+      const val = argv[i + 1];
+      if (!val) {
+        throw new Error('--env-suffix requires a value');
+      }
+      envSuffix = val.trim().toUpperCase();
+      i += 1;
       continue;
     }
 
@@ -237,19 +256,26 @@ async function ensureDnsRecord({ apiToken, zoneName, zoneId, hostName, cnameTarg
 
 const ROUTE_SLOTS = ['API', 'WS', 'WEB', 'SYSTEM'];
 
-function collectMultiRoutes(values) {
+function collectMultiRoutes(values, suffix) {
   const routes = [];
 
   for (const slot of ROUTE_SLOTS) {
-    const hostname = (values[`CF_TUNNEL_HOSTNAME_${slot}`] || '').trim();
-    const service = (values[`CF_TUNNEL_LOCAL_${slot}`] || '').trim();
+    const hostnameKey = suffix && values[`CF_TUNNEL_HOSTNAME_${slot}_${suffix}`]
+      ? `CF_TUNNEL_HOSTNAME_${slot}_${suffix}`
+      : `CF_TUNNEL_HOSTNAME_${slot}`;
+    const serviceKey = suffix && values[`CF_TUNNEL_LOCAL_${slot}_${suffix}`]
+      ? `CF_TUNNEL_LOCAL_${slot}_${suffix}`
+      : `CF_TUNNEL_LOCAL_${slot}`;
+
+    const hostname = (values[hostnameKey] || '').trim();
+    const service = (values[serviceKey] || '').trim();
 
     if (!hostname) {
       continue;
     }
 
     if (!service) {
-      console.warn(`CF_TUNNEL_HOSTNAME_${slot} is set but CF_TUNNEL_LOCAL_${slot} is empty — skipping ${slot}.`);
+      console.warn(`${hostnameKey} is set but ${serviceKey} is empty — skipping ${slot}.`);
       continue;
     }
 
@@ -663,7 +689,7 @@ async function main() {
 
   const parsed = parseEnvFile(envFile);
 
-  const multiRoutes = collectMultiRoutes(parsed.values);
+  const multiRoutes = collectMultiRoutes(parsed.values, envSuffix);
   if (multiRoutes.length > 0) {
     await runMultiRouteTunnel({ parsed, routes: multiRoutes });
     return;

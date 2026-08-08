@@ -11,7 +11,11 @@ param(
     # DB_DATABASE the process resolves to. Nothing isolates that to the test
     # database on its own - see $dbDatabaseTest below - so this used to run
     # unconditionally on every dash:start and silently wipe real dev data.
-    [switch]$Tests
+    [switch]$Tests,
+    # Explicit flag rather than inferring from Environment -eq "tunnel": any
+    # environment (local, staging, production, ...) may need its Cloudflare
+    # tunnel opened, not just one literally named "tunnel".
+    [switch]$Tunnel
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,9 +71,11 @@ $dbDatabaseTest = if ($dbDatabaseTestLine) { ($dbDatabaseTestLine -replace '^DB_
 
 # Total varies with what actually runs below, so the [n/N] counter stays
 # accurate instead of a stale hardcoded "/9" regardless of flags.
+$openTunnel = $Tunnel -or ($Environment -eq "tunnel")
+
 $totalSteps = 7
 if ($Tests) { $totalSteps++ }
-if ($Environment -eq "tunnel") { $totalSteps++ }
+if ($openTunnel) { $totalSteps++ }
 $step = 0
 
 $env:ENV_FILE = $selectedEnvFile
@@ -178,12 +184,15 @@ if ($Tests) {
     }
 }
 
-if ($Environment -eq "tunnel") {
+if ($openTunnel) {
     $step++
     Write-Host "[$step/$totalSteps] Opening Cloudflare tunnel terminal window"
     # CF_TUNNEL_* config lives in the Compose-level file, not the Laravel app
     # env file, so the tunnel script needs its own explicit --env-file too.
-    Open-CommandWindow -Title "dash-backend-docker | $Project | Cloudflare Tunnel" -Command "node ./scripts/cloudflare-tunnel.js --env-file '$composeEnvFile'"
+    # --env-suffix lets that one file carry per-environment hostname overrides
+    # (e.g. CF_TUNNEL_HOSTNAME_API_STAGING) alongside the base dev hostnames.
+    $envSuffix = $Environment.ToUpper()
+    Open-CommandWindow -Title "dash-backend-docker | $Project | Cloudflare Tunnel" -Command "node ./scripts/cloudflare-tunnel.js --env-file '$composeEnvFile' --env-suffix '$envSuffix'"
 }
 
 $testsNote = if ($Tests) { " Tests are tailing too." } else { "" }

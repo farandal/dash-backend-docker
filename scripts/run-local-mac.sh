@@ -26,11 +26,25 @@ WINDOW_DELAY_SECONDS="${WINDOW_DELAY_SECONDS:-3}"
 # unconditionally on every `dash:start` and silently wipe real dev data.
 # Pass --tests (any position, after project/environment) to opt in.
 RUN_TESTS=0
+# Explicit flag rather than inferring from ENVIRONMENT == "tunnel": any
+# environment (local, staging, production, ...) may need its Cloudflare
+# tunnel opened, not just one literally named "tunnel". ENVIRONMENT still
+# controls which .env.<project>.<environment> app env is mounted; this only
+# controls whether the tunnel window opens alongside it. ENVIRONMENT ==
+# "tunnel" still implies it too, for backward compatibility with existing
+# `pnpm dash:start <project> tunnel` usage.
+OPEN_TUNNEL=0
 for arg in "$@"; do
   if [[ "$arg" == "--tests" ]]; then
     RUN_TESTS=1
   fi
+  if [[ "$arg" == "--tunnel" ]]; then
+    OPEN_TUNNEL=1
+  fi
 done
+if [[ "$ENVIRONMENT" == "tunnel" ]]; then
+  OPEN_TUNNEL=1
+fi
 
 # Compose-level config (DOMAIN_PATH, STORAGE_PATH, DASH_IMAGE, ports) lives in
 # one file per project (.env.<project>). Docker Compose only auto-loads a
@@ -92,7 +106,7 @@ compose() {
 # accurate instead of a stale hardcoded "/9" regardless of flags.
 TOTAL_STEPS=7
 [[ "$RUN_TESTS" == "1" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
-[[ "$ENVIRONMENT" == "tunnel" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+[[ "$OPEN_TUNNEL" == "1" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 STEP=0
 next_step() { STEP=$((STEP + 1)); }
 
@@ -194,12 +208,17 @@ if [[ "$RUN_TESTS" == "1" ]]; then
   fi
 fi
 
-if [[ "$ENVIRONMENT" == "tunnel" ]]; then
+if [[ "$OPEN_TUNNEL" == "1" ]]; then
   next_step
   echo "[$STEP/$TOTAL_STEPS] Opening Cloudflare tunnel terminal window"
   # CF_TUNNEL_* config lives in the Compose-level file, not the Laravel app
   # env file, so the tunnel script needs its own explicit --env-file too.
-  open_terminal_window "dash-backend-docker | $PROJECT | Cloudflare Tunnel" "node ./scripts/cloudflare-tunnel.js --env-file '$COMPOSE_ENV_FILE'"
+  # --env-suffix lets that one file carry per-environment hostname overrides
+  # (e.g. CF_TUNNEL_HOSTNAME_API_STAGING) alongside the base dev hostnames,
+  # so `staging` and `tunnel` route to different public hostnames on the same
+  # named tunnel instead of colliding on CF_TUNNEL_HOSTNAME_API.
+  ENV_SUFFIX="$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')"
+  open_terminal_window "dash-backend-docker | $PROJECT | Cloudflare Tunnel" "node ./scripts/cloudflare-tunnel.js --env-file '$COMPOSE_ENV_FILE' --env-suffix '$ENV_SUFFIX'"
 fi
 
 echo "Done. Reverb and Horizon run automatically via supervisord inside the container; their logs and the Laravel log are tailing in separate Terminal windows.$( [[ "$RUN_TESTS" == "1" ]] && echo " Tests are tailing too." )"

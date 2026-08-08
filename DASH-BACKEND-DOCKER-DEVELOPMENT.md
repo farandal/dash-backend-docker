@@ -233,6 +233,27 @@ pnpm dash:start reddorada tunnel
 This uses `.env.<domain>.tunnel` as the Laravel app env (sets `APP_URL`, `REVERB_HOST`,
 `REVERB_PORT=443`, `REVERB_SCHEME=https` for the public hostnames).
 
+Opening the tunnel is controlled by an explicit `--tunnel` flag, not by the environment name —
+`environment` only selects which `.env.<project>.<environment>` app env gets mounted. Passing
+`tunnel` as the environment still opens the tunnel automatically (backward-compatible shorthand,
+since `.env.<domain>.tunnel` has no other use), but any other environment needs `--tunnel`
+explicit:
+
+```bash
+pnpm dash:start kitchntabs staging --tunnel   # boots the stack + opens the tunnel to the
+                                               # staging hostnames below
+pnpm dash:start kitchntabs staging            # boots the stack only, reachable at localhost
+```
+
+The tunnel script is passed `--env-suffix <ENVIRONMENT>` (uppercased), so one compose-level
+`.env.<domain>` file can carry hostnames for several environments at once: it prefers
+`CF_TUNNEL_HOSTNAME_<SLOT>_<SUFFIX>` / `CF_TUNNEL_LOCAL_<SLOT>_<SUFFIX>` over the base
+`CF_TUNNEL_HOSTNAME_<SLOT>` / `CF_TUNNEL_LOCAL_<SLOT>` vars when the suffixed ones are set,
+e.g. `CF_TUNNEL_HOSTNAME_API_STAGING=api-staging.<domain>`. All environments share the same
+named tunnel (`CF_TUNNEL_NAME`) — `pushTunnelIngressConfig()` in `cloudflare-tunnel.js` merges
+routes into the tunnel's existing ingress rather than replacing them, so starting the staging
+tunnel doesn't disturb the dev (`tunnel`) routes already running on it, and vice versa.
+
 ### Required env vars in `.env.<domain>`
 
 ```ini

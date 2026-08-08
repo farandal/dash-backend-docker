@@ -53,6 +53,11 @@ Each domain uses a **pair** of env files:
   application config.
 - **`.env.<domain>.tunnel`** — tunnel-mode variant of the app env (overrides `APP_URL`,
   `REVERB_HOST`, `REVERB_PORT`, `REVERB_SCHEME` for public Cloudflare hostnames).
+- **`.env.<domain>.staging`** — same idea, for the staging public hostnames
+  (`api-staging.<domain>` / `ws-staging.<domain>`). Run with
+  `pnpm dash:start <domain> staging --tunnel` — see
+  [DASH-BACKEND-DOCKER-DEVELOPMENT.md](./DASH-BACKEND-DOCKER-DEVELOPMENT.md#cloudflare-tunnel)
+  for how `--tunnel` and per-environment hostnames work.
 
 All env files are gitignored. Copy the templates to create yours:
 

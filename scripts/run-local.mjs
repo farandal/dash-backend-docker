@@ -18,6 +18,13 @@ const isWindows = process.platform === "win32";
 // the remaining args, e.g. `pnpm dash:start vanexa tunnel --tests`.
 const runTests = process.argv.slice(4).includes("--tests") || process.env.DASH_RUN_TESTS === "1";
 
+// Explicit flag rather than inferring from `environment === "tunnel"`: any
+// environment (local, staging, production, ...) may need its Cloudflare
+// tunnel opened, not just one literally named "tunnel". The `environment`
+// arg still controls which .env.<project>.<environment> app env is mounted;
+// this only controls whether the tunnel window opens alongside it.
+const openTunnel = process.argv.slice(4).includes("--tunnel") || process.env.DASH_TUNNEL === "1";
+
 const command = isWindows ? "powershell" : "bash";
 const args = isWindows
   ? [
@@ -31,8 +38,15 @@ const args = isWindows
       "-Environment",
       environment,
       ...(runTests ? ["-Tests"] : []),
+      ...(openTunnel ? ["-Tunnel"] : []),
     ]
-  : ["./scripts/run-local-mac.sh", project, environment, ...(runTests ? ["--tests"] : [])];
+  : [
+      "./scripts/run-local-mac.sh",
+      project,
+      environment,
+      ...(runTests ? ["--tests"] : []),
+      ...(openTunnel ? ["--tunnel"] : []),
+    ];
 
 console.log(`Starting local stack for project: ${project} (environment: ${environment})`);
 console.log(`Launcher platform: ${isWindows ? "windows" : "unix"}`);
