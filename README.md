@@ -294,6 +294,59 @@ docker compose exec app php artisan migrate:fresh --seed
 
 ## Cloudflare tunnel
 
+### How it works
+
+A **named tunnel** is a persistent object in your Cloudflare account (visible under Zero Trust →
+Networks → Tunnels), identified by name/id. It doesn't route anywhere by itself — it just holds
+an **ingress config**: a list of `{ hostname, service }` rules mapping public hostnames to local
+services (e.g. `api-dev.vanexa.cl → http://localhost:25100`), plus a catch-all 404. Cloudflare's
+edge terminates TLS for every hostname in that ingress and, for the ones you've CNAMEd at
+`<tunnel-id>.cfargotunnel.com`, forwards the request through whichever `cloudflared` connector is
+currently running with that tunnel's token — the connector dials **out** to Cloudflare, so there's
+no inbound port-forwarding or public IP needed on your machine.
+
+`scripts/cloudflare-tunnel.js` automates the whole lifecycle against the Cloudflare API — create
+the named tunnel if it doesn't exist yet, fetch its connector token, push the ingress rules for
+whatever `CF_TUNNEL_HOSTNAME_<SLOT>` vars are set, create the DNS CNAMEs, then run
+`cloudflared tunnel run --token-file <fetched-token>`. Because ingress pushes are **merged** with
+whatever's already on the tunnel (not replaced), several apps and several environments can safely
+share one named tunnel — see [Multiple environments on one named tunnel](#multiple-environments-on-one-named-tunnel) below.
+
+### Fresh setup
+
+This script's API-driven flow means you do **not** need `cloudflared tunnel login` (the flow that
+creates a local `~/.cloudflared/cert.pem` profile) — that's for the older manual CLI, and this
+script never calls it.
+
+1. **Install the `cloudflared` binary** — that's the only local install step:
+   ```bash
+   brew install cloudflared
+   ```
+2. **Create a Cloudflare API Token** (dashboard → My Profile → API Tokens — a scoped *API Token*,
+   not the legacy account-wide *Global API Key*), with:
+   - **Account → Cloudflare Tunnel → Edit**
+   - **Zone → DNS → Edit** (scoped to the relevant zone, e.g. `vanexa.cl`)
+3. **Find your Account ID** in the Cloudflare dashboard sidebar (same page any zone's overview is on).
+4. **Store the token in the compose-level `.env.<domain>` file** — `.env.vanexa` / `.env.kitchntabs`
+   — **not** in `.env.<domain>.local` / `.env.<domain>.tunnel` / `.env.<domain>.staging`. Those are
+   the *Laravel app* env files (mounted into the container as `/var/www/dash/.env`); the tunnel
+   script only ever reads `CF_*` vars from the compose-level file, passed via its own
+   `--env-file` (see [Multi-hostname mode](#multi-hostname-mode-api-dev--ws-dev) below):
+   ```ini
+   CF_API_TOKEN=<your api token>
+   CF_ACCOUNT_ID=<your account id>
+   CF_ZONE_NAME=<domain>.com
+   CF_TUNNEL_TOKEN=            # leave blank — the script creates the named tunnel and writes
+                                # this back automatically on first run
+   ```
+5. Set at least one `CF_TUNNEL_HOSTNAME_<SLOT>` + `CF_TUNNEL_LOCAL_<SLOT>` pair (see below) and
+   run `pnpm dash:start <domain> tunnel` (or any environment with `--tunnel`).
+
+If a named tunnel with the same `CF_TUNNEL_NAME` already exists in the account (e.g. `dash-dev`,
+shared across `vanexa` and `kitchntabs`), reuse its API token instead of creating a second one —
+one token/tunnel can serve every domain and environment that shares that account, since ingress
+merges rather than replaces.
+
 ### Single-hostname mode (legacy)
 
 Set `CF_TUNNEL_HOSTNAME` and `CF_TUNNEL_TOKEN` in `.env.<domain>`, then:
@@ -305,11 +358,8 @@ pnpm cloudflare:tunnel --env-file .env.<domain>
 ### Multi-hostname mode (api-dev + ws-dev)
 
 One named tunnel serves multiple public hostnames. Active automatically when any
-`CF_TUNNEL_HOSTNAME_<SLOT>` is non-empty in `.env.<domain>`.
-
-**One-time Cloudflare setup:**
-1. Create an API token with **Cloudflare Tunnel → Edit** and **DNS → Edit** permissions.
-2. Find your **Account ID** in the Cloudflare dashboard sidebar.
+`CF_TUNNEL_HOSTNAME_<SLOT>` is non-empty in `.env.<domain>`. See [Fresh setup](#fresh-setup)
+above for the one-time API token/account setup.
 
 **`.env.<domain>` tunnel variables:**
 
@@ -354,7 +404,7 @@ What the script does in multi-route mode:
 3. Creates/updates proxied CNAMEs pointing at `<tunnel-id>.cfargotunnel.com`.
 4. Runs `cloudflared tunnel run --token-file ...` pulling the ingress rules just pushed.
 
-### Multiple environments on one named tunnel (dev, staging, ...)
+### Multiple environments on one named tunnel
 
 The same named tunnel (`CF_TUNNEL_NAME`) can serve more than one environment's hostnames at
 once, because ingress is merged rather than overwritten (see step 2 above). Rather than
