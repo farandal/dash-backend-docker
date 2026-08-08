@@ -53,7 +53,18 @@ docker compose --env-file .env.vanexa down -v
 
 # Recreate just the app container (picks up new env/image; resets vendor/ and any
 # manually-copied-in file patches — anything not in domain/ or a host mount is lost)
+#
+# CRITICAL: if the running container is anything other than the default environment
+# (staging, tunnel, ...), export ENV_FILE first — it controls which app env file gets
+# bind-mounted as /var/www/dash/.env, and --env-file .env.<project> alone does NOT set
+# it; without the export it silently falls back to the compose file's default
+# (.env.<project>.local), swapping a staging container to local mode without any
+# visible error (DB creds are often identical between the two, so this can hide for
+# hours — confirmed happening for real on 2026-08-08, see README.md Troubleshooting).
+export ENV_FILE=.env.kitchntabs.staging   # match whichever environment is actually running
 docker compose --env-file .env.kitchntabs up -d --force-recreate app
+
+export ENV_FILE=.env.vanexa.staging
 docker compose --env-file .env.vanexa up -d --force-recreate app
 ```
 
@@ -113,8 +124,10 @@ you're done: `--debug` logs every connection/message and will bloat the log file
 traffic.
 
 ```bash
-# after editing REVERB_DEBUG in the app env file, apply it with a container recreate:
-docker compose --env-file .env.kitchntabs up -d --force-recreate app
+# after editing REVERB_DEBUG in the app env file, apply it with a container recreate.
+# Export ENV_FILE matching whichever env file you just edited FIRST — see the warning
+# on the force-recreate commands above, this is the same footgun.
+export ENV_FILE=.env.vanexa.staging
 docker compose --env-file .env.vanexa up -d --force-recreate app
 ```
 

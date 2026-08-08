@@ -582,6 +582,38 @@ Cloudflare dashboard → the zone (e.g. `vanexa.cl`) → **Network** → **HTTP/
 off. Requires Cloudflare dashboard access — the `CF_API_TOKEN` used by
 `cloudflare-tunnel.js` is scoped to Tunnel:Edit + DNS:Edit only and cannot toggle this.
 
+### `--force-recreate` silently switches a staging container to local mode
+
+Symptom, hit for real on 2026-08-08: a staging container (e.g. `vanexa`) looks completely
+healthy — DB queries work, migrations run fine, Horizon dispatches cleanly — but the browser
+can't reach the WebSocket server (`config('reverb.servers.reverb.hostname')` resolves to
+`localhost` instead of the public tunnel hostname), and other staging-only overrides
+(`SANCTUM_STATEFUL_DOMAINS` with the tunnel hostnames, etc.) are silently missing too.
+
+**Root cause:** `ENV_FILE` controls which app env file gets bind-mounted as
+`/var/www/dash/.env` (see the volumes block in `docker-compose.yml`) — it's a *separate*
+mechanism from `--env-file .env.<project>` (which only feeds `${...}` substitution for the
+compose file itself, e.g. `DOMAIN_PATH`, ports, `COMPOSE_PROJECT_NAME`). If you run `docker
+compose --env-file .env.<project> up -d --force-recreate app` **without** also exporting
+`ENV_FILE` in your shell first, Compose falls back to the compose file's baked-in default —
+`.env.<project>.local` — silently recreating a staging container in local mode. Since `DB_*`
+credentials are usually identical between `.local` and `.staging` for a given project, this can
+look completely fine for hours: everything that touches the database keeps working, only the
+browser-facing/tunnel-specific values are wrong.
+
+**Fix:** always export `ENV_FILE` to match the environment that's actually supposed to be
+running before any `--force-recreate`:
+
+```bash
+export ENV_FILE=.env.vanexa.staging   # match whichever environment is actually running
+docker compose --env-file .env.vanexa up -d --force-recreate app
+```
+
+See [QUICK_COMMANDS.md](./QUICK_COMMANDS.md) for this spelled out on every force-recreate
+example. If you suspect this already happened: `docker inspect <container> --format '{{range
+.Mounts}}{{if eq .Destination "/var/www/dash/.env"}}{{.Source}}{{end}}{{end}}'` shows exactly
+which host file is currently mounted.
+
 ---
 
 ## Full Docker and Artisan reference
