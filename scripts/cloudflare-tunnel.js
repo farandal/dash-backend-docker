@@ -175,6 +175,25 @@ function commandExists(command) {
   return check.status === 0;
 }
 
+// Blocks until the Docker daemon actually responds. Right after boot (Docker
+// Desktop itself still starting), or right after this script is (re)started
+// by pm2, connecting before Docker is up just produces "connection refused"
+// noise in cloudflared's logs for every request until the backend containers
+// exist — harmless once they do, but this avoids the noise and matches the
+// same "wait, don't crash-loop" approach used in scripts/log-tail.js.
+function waitForDocker() {
+  let announced = false;
+  for (;;) {
+    const check = spawnSync('docker', ['info'], { stdio: 'ignore' });
+    if (check.status === 0) return;
+    if (!announced) {
+      console.log('[cloudflare-tunnel] Docker not ready yet, waiting...');
+      announced = true;
+    }
+    spawnSync('sleep', ['3']);
+  }
+}
+
 function parsePositiveInt(value, defaultValue) {
   if (!value) {
     return defaultValue;
@@ -686,6 +705,8 @@ async function main() {
     console.error(`Env file not found: ${envFile}`);
     process.exit(1);
   }
+
+  waitForDocker();
 
   const parsed = parseEnvFile(envFile);
 

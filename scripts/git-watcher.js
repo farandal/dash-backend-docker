@@ -44,6 +44,24 @@ function err(msg) {
   console.error(`[${new Date().toISOString()}] ERROR: ${msg}`);
 }
 
+// Blocks until Docker actually responds. Repo polling itself doesn't need
+// Docker, but the deploy steps (composer/migrate/supervisorctl/image build)
+// do — waiting once before the first cycle avoids those failing immediately
+// if pm2 resurrects this right at boot, before Docker Desktop itself is up.
+// Later cycles don't wait: they already log-and-skip cleanly on failure.
+function waitForDocker() {
+  let announced = false;
+  for (;;) {
+    const check = spawnSync('docker', ['info'], { stdio: 'ignore' });
+    if (check.status === 0) return;
+    if (!announced) {
+      log('Docker not ready yet, waiting...');
+      announced = true;
+    }
+    spawnSync('sleep', ['3']);
+  }
+}
+
 // Runs a command, returns { ok, stdout } — never throws. `cwd` is resolved relative
 // to PROJECT_DIR so repo paths like '../dash-backend' work regardless of where this
 // script is invoked from.
@@ -244,5 +262,6 @@ function runCycle() {
 }
 
 log(`git-watcher starting — polling every ${POLL_INTERVAL_MS / 1000}s`);
+waitForDocker();
 runCycle();
 setInterval(runCycle, POLL_INTERVAL_MS);

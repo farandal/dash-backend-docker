@@ -93,6 +93,18 @@ docker compose --env-file .env.vanexa exec app supervisorctl -c /etc/supervisor/
 
 ## Logs
 
+**Live dashboard, all logs, both projects, one screen:**
+
+```bash
+pnpm exec pm2 monit
+```
+
+Each stream below is also its own pm2 app (`<project>-<laravel|horizon|reverb|container>-log`),
+so `pm2 monit` shows all 8 as separate real-time panes. See
+[PM2_AUTOMATION.md](./PM2_AUTOMATION.md#real-time-log-dashboard-pm2-monit) for how that's wired
+up. The manual `docker compose exec ... tail -f` commands below still work standalone if you
+just want one specific stream without pm2:
+
 ```bash
 # Horizon (queue worker — job dispatch/processing)
 docker compose --env-file .env.kitchntabs exec app tail -f /var/www/dash/storage/logs/supervisor-horizon.log /var/www/dash/storage/logs/supervisor-horizon-error.log

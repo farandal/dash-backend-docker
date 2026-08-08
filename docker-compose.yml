@@ -2,6 +2,7 @@ services:
   app:
     image: "${DASH_IMAGE:-local/dash-backend-core:latest}"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_app"
+    restart: unless-stopped
     user: "0:0"
     security_opt:
       - seccomp:unconfined
@@ -95,6 +96,7 @@ services:
   pgsql:
     image: "postgres:latest"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_pgsql"
+    restart: unless-stopped
     ports:
       - "${DBI_FORWARD_DB_PORT:-15432}:5432"
     environment:
@@ -157,6 +159,7 @@ services:
   redis:
     image: "redis:alpine"
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_redis"
+    restart: unless-stopped
     ports:
       - "${DBI_FORWARD_REDIS_PORT:-16379}:6379"
     volumes:
@@ -172,6 +175,7 @@ services:
     image: "mailhog/mailhog:latest"
     platform: linux/amd64
     container_name: "${COMPOSE_PROJECT_NAME:-dash_image}_mailhog"
+    restart: unless-stopped
     ports:
       - "${DBI_FORWARD_MAILHOG_PORT:-11025}:1025"
       - "${DBI_FORWARD_MAILHOG_DASHBOARD_PORT:-18025}:8025"
