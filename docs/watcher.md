@@ -195,6 +195,25 @@ Deliberately minimal ("nothing fancy," not a real deploy pipeline):
   stash, force-push, or force-merge anything.
 - **Never runs destructive migrations.** Only `php artisan migrate --force --no-interaction` —
   never `migrate:fresh` or `migrate:refresh`.
+- **kitchntabs and vanexa share one host `bootstrap/cache/` directory.** `docker-compose.yml`
+  bind-mounts `../dash-backend/bootstrap` into *both* projects' containers (same host path,
+  see the "core source" mount block). `composer install`'s `post-autoload-dump` hook
+  auto-runs `config:cache`, which writes into that shared directory — so if either project's
+  `.env` is ever unresolvable for any reason (a stuck/broken bind mount, mid-recreate timing),
+  the resulting bad cache silently poisons **the other project too**, even though its own
+  `.env` was completely fine. Hit for real on 2026-08-08: a stale vanexa container had lost its
+  `/var/www/dash/.env` bind mount (root cause not fully pinned down — likely fallout from
+  several manual `--force-recreate` cycles during same-day debugging); `composer install`
+  cached Laravel's stock `forge`/`forge`/no-password DB defaults, and kitchntabs — untouched
+  that cycle — started failing DB queries with the same bad cached config seconds later.
+  `optimize:clear` is the only thing that cleans this up, so `updateProject()` now runs it
+  unconditionally, even when `migrate` fails (previously it was skipped on migrate failure,
+  which is exactly how the bad cache lingered until caught manually). If this recurs, `docker
+  compose --env-file .env.<project> exec app php artisan config:clear` fixes both projects
+  immediately regardless of which one's container has the underlying problem. A deeper fix —
+  giving each project its own `bootstrap/cache` instead of sharing `dash-backend`'s — would
+  remove the cross-contamination risk entirely but changes the local-dev mount architecture
+  too, so it's a deliberate follow-up, not done here.
 - **Single-machine, single-instance.** No distributed locking; only designed to run once, on
   this Mac, under one pm2 daemon.
 

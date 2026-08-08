@@ -150,15 +150,23 @@ function updateProject(project, { coreChanged }) {
 
   if (!composerSync(project)) return;
 
+  // composer's post-autoload-dump hook auto-runs `config:cache`. Its bootstrap/cache/
+  // is bind-mounted from ../dash-backend on the HOST — the same directory for both
+  // kitchntabs and vanexa (see docker-compose.yml) — so if this project's env was
+  // ever unresolvable for any reason (a broken mount, mid-recreate timing, ...), the
+  // resulting bad cache silently poisons the OTHER project too, not just this one.
+  // optimize:clear is the only thing that cleans it up, so it must run unconditionally
+  // — including when migrate fails below — never gated behind migrate's success.
   const migrate = composeExecApp(project, 'php', 'artisan', 'migrate', '--force', '--no-interaction');
-  if (!migrate.ok) {
-    err(`${project}: migrate failed — ${migrate.stderr}`);
-    return;
-  }
 
   const clear = composeExecApp(project, 'php', 'artisan', 'optimize:clear');
   if (!clear.ok) {
     warn(`${project}: optimize:clear failed — ${clear.stderr}`);
+  }
+
+  if (!migrate.ok) {
+    err(`${project}: migrate failed — ${migrate.stderr}`);
+    return;
   }
 
   if (!coreChanged) {
