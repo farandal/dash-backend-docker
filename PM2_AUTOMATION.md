@@ -14,8 +14,9 @@ depend on each other, how to verify it, and what to do when a piece doesn't come
 
 ## What "fully automated" actually requires
 
-Getting from a cold power-on to both staging sites being reachable, with nobody physically
-present, requires **four independent layers** to each come back on their own, in order:
+Getting from a cold power-on to both staging sites being reachable — plus a visible live log
+dashboard — with nobody physically present, requires **five independent layers** to each come
+back on their own, in order:
 
 ```
 Mac powers on
@@ -26,6 +27,10 @@ Mac powers on
         → pm2 resurrects its saved process list
           → dash-watcher starts (polls the 3 repos every 60s)
           → kitchntabs-tunnel starts (the ONE cloudflared process — see below)
+          → 8 log-tail apps start (see "Real-time log dashboard" below)
+      → a second, independent launchd agent opens a Terminal window running `pm2 monit`
+        (see "pm2 monit at login" below — this is NOT part of pm2's own resurrect chain,
+        since `pm2 monit` is an interactive view, not a backgroundable service)
 ```
 
 Skip any one layer and the chain breaks silently — e.g. Docker containers can be perfectly
@@ -233,6 +238,45 @@ done
 pnpm exec pm2 save
 ```
 
+### `pm2 monit` opening automatically at login
+
+`pm2 monit` is an interactive terminal UI, not a backgroundable service — it can't be a pm2 app
+itself (there's nothing to daemonize; it's a *view* into the daemon, not a process pm2 would
+supervise). Getting it to appear on screen automatically therefore needs its own mechanism,
+separate from pm2's own resurrect chain: a second, independent LaunchAgent that opens a
+dedicated Terminal window at login.
+
+- **`scripts/open-pm2-monit.sh`** — waits for `pm2 ping` to succeed (the daemon may not be up
+  yet right at login), then `exec`s `pm2 monit`, replacing the shell so closing the window or
+  Ctrl-C behaves like quitting monit normally.
+- **`scripts/launchd/com.dashbackenddocker.pm2monit.plist`** — `RunAtLoad: true`,
+  **deliberately no `KeepAlive`**: its `ProgramArguments` is a single `osascript` call telling
+  Terminal.app to open a window running the script above. `osascript`/`do script` returns
+  **immediately** after handing off to Terminal — it doesn't wait for the script to finish — so
+  `KeepAlive` would see that immediate exit as a crash and relaunch it in a loop, spamming a new
+  Terminal window every second. This is a true one-shot: open exactly one window per login.
+
+**Install** (already done on this machine — reference/reproducibility only):
+
+```bash
+cp scripts/launchd/com.dashbackenddocker.pm2monit.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.dashbackenddocker.pm2monit.plist
+```
+
+No `sudo` here, unlike `pm2 startup` — this is a plain per-user LaunchAgent with no system-level
+install step, so running `launchctl load` as your own user (not root) is correct and avoids the
+GUI-session domain confusion documented under "pm2 daemon instability" below (that confusion was
+specifically caused by loading a user LaunchAgent *with* `sudo`).
+
+**Verify:** `RunAtLoad` fires as soon as the plist is loaded, not just at a real login — so
+loading it manually is itself a real test, not a simulation. Confirm with the process list, not
+`launchctl list`/`print` (unreliable from a non-interactive shell, per the same caveat as pm2's
+own startup agent):
+
+```bash
+ps aux | grep "pm2 monit" | grep -v grep    # should show it actually running
+```
+
 ---
 
 ## pm2 daemon instability on a fresh reboot — a third real incident
@@ -299,6 +343,9 @@ pnpm exec pm2 logs --lines 20 --nostream
 ps aux | grep cloudflared | grep -v grep          # expect exactly ONE process
 curl -s -o /dev/null -w "kitchntabs: %{http_code}\n" https://api-staging.kitchntabs.com
 curl -s -o /dev/null -w "vanexa: %{http_code}\n"     https://api-staging.vanexa.cl
+
+# Layer 5: pm2 monit window
+ps aux | grep "pm2 monit" | grep -v grep          # expect it actually running
 ```
 
 ---

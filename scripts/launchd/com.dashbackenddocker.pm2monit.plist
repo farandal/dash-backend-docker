@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dashbackenddocker.pm2monit</string>
+
+  <!-- One-shot: opens a Terminal window at login, which itself waits for the
+       pm2 daemon and execs `pm2 monit`. Deliberately no KeepAlive — "tell
+       application Terminal to do script" returns immediately after issuing
+       the command (it doesn't wait for the script to finish), so KeepAlive
+       would relaunch osascript in a loop and spam new Terminal windows. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/osascript</string>
+    <string>-e</string>
+    <string>tell application "Terminal" to do script "/Users/farandal/KTECH/dash-backend-docker/scripts/open-pm2-monit.sh"</string>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/com.dashbackenddocker.pm2monit.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.dashbackenddocker.pm2monit.err</string>
+</dict>
+</plist>
