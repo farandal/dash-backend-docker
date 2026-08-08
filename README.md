@@ -546,6 +546,42 @@ its healthcheck.
 A domain test extends a core base class whose namespace was renamed. Update the import path
 in the domain test and move the file to mirror the new namespace.
 
+### Some WebSocket-test triggers silently never arrive (staging tunnel)
+
+Symptom, diagnosed 2026-08-08 against `api-staging.vanexa.cl/ws`: clicking the `/ws` test
+page's "PublicMessage" button repeatedly, some clicks return a normal `{success:true}` response
+but never produce a received message — with **zero** trace in `laravel.log`, `supervisor-horizon.log`,
+or `supervisor-reverb.log` for the missing ones (confirmed via `REVERB_DEBUG=true`, see
+[Reverb debug mode](./QUICK_COMMANDS.md#reverb-debug-mode)). Not a Reverb/Horizon/tunnel bug —
+the request never reached the origin at all.
+
+**Root cause:** Cloudflare advertises `alt-svc: h3=":443"` on every proxied response, which
+tells the browser it may use HTTP/3 (QUIC, over UDP) for subsequent requests to that host. The
+WebSocket connection itself stays on plain TCP (WS can't run over HTTP/3) and stays reliable;
+individual `POST`/`fetch` calls that opportunistically upgrade to QUIC can silently vanish on
+networks that interfere with UDP — many restrictive corporate/institutional firewalls don't
+block QUIC outright, they just half-drop or mangle it, which look identical to "the browser
+just never sent it": no error, no timeout shown, nothing in any server log.
+
+**Caveats — this is a network-dependent diagnosis, not a universal one:**
+- Confirmed for one specific user on one specific restrictive network. A different flaky-tunnel
+  symptom on a different network is not automatically the same root cause — check
+  `cf-cache-status` (rule out edge caching) and compare `nginx`/Horizon/Reverb log counts against
+  actual click counts (rule out the DASH code itself) before assuming QUIC.
+- The fix below (disabling QUIC) fixes *this* symptom. It says nothing about unrelated tunnel
+  issues like wrong `CF_TUNNEL_HOSTNAME_*`/`REVERB_PORT` values — rule those out first (see
+  [Cloudflare tunnel](#cloudflare-tunnel) above).
+
+**Fast confirmation** (client-side only, no server/Cloudflare changes): Chrome →
+`chrome://flags/#enable-quic` → **Disabled** → relaunch → retest. If every click now arrives,
+QUIC is confirmed as the cause. This is a *personal* workaround — it only fixes it for that one
+browser, and disabling QUIC there also affects every other site, not just this one.
+
+**Real fix** (fixes it for every visitor behind a similar firewall, not just one browser):
+Cloudflare dashboard → the zone (e.g. `vanexa.cl`) → **Network** → **HTTP/3 (with QUIC)** →
+off. Requires Cloudflare dashboard access — the `CF_API_TOKEN` used by
+`cloudflare-tunnel.js` is scoped to Tunnel:Edit + DNS:Edit only and cannot toggle this.
+
 ---
 
 ## Full Docker and Artisan reference
