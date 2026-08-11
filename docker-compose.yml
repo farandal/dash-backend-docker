@@ -43,6 +43,15 @@ services:
       - "${BACKEND_PATH:-../dash-backend}/config/firebase.php:/var/www/dash/config/firebase.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/config/broadcasting.php:/var/www/dash/config/broadcasting.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/config/horizon.php:/var/www/dash/config/horizon.php:ro"
+      # Carries the `ai-agents` channel that AgentUsageRecorder logs token/timing
+      # accounting to. Unmounted, Log::channel('ai-agents') resolves against the
+      # baked config, throws "Log [ai-agents] is not defined", and the recorder
+      # swallows it — so usage silently stops being logged with nothing to see.
+      - "${BACKEND_PATH:-../dash-backend}/config/logging.php:/var/www/dash/config/logging.php:ro"
+      # max_request_size/max_message_size. Left baked at Reverb's 10KB default,
+      # an AI turn whose tool result exceeds it is refused with a 413 and the
+      # whole turn dies — the failure this raise exists to prevent.
+      - "${BACKEND_PATH:-../dash-backend}/config/reverb.php:/var/www/dash/config/reverb.php:ro"
       # Carries SKIP_EMAIL_VERIFICATION (and the signup defaults). Without this
       # mount the container keeps the config/system.php baked into the image, so
       # a newly added key reads as NULL no matter what the .env says — the same
