@@ -35,6 +35,9 @@ pnpm dash:start vanexa local
 pnpm dash:start kitchntabs local --tunnel
 pnpm dash:start vanexa local --tunnel
 
+pnpm dash:start kitchntabs development --tunnel
+pnpm dash:start vanexa development --tunnel
+
 pnpm dash:start kitchntabs staging --tunnel
 pnpm dash:start vanexa staging --tunnel
 
