@@ -588,8 +588,20 @@ function runNamedTunnel({
     args.push('--url', localUrl);
   }
 
+  // Force IPv4-only dialing to Cloudflare's edge. Left on "auto", cloudflared will
+  // opportunistically use IPv6, and on networks with a flaky IPv6 route all 4 QUIC
+  // connections can drop simultaneously ("no route to host" on every connIndex at once),
+  // producing a 502 for every hostname on the tunnel until it self-heals. IPv4 has proven
+  // far more stable in practice; override with CF_TUNNEL_EDGE_IP_VERSION if ever needed.
+  // (--edge-ip-version is a `tunnel` command option, not a `run` subcommand option, so it
+  // must precede `run` on the arg list if passed as a flag — using the env var avoids that
+  // ordering footgun entirely.)
   const proc = spawn('cloudflared', args, {
     stdio: ['inherit', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      TUNNEL_EDGE_IP_VERSION: process.env.CF_TUNNEL_EDGE_IP_VERSION || '4',
+    },
   });
 
   let fallbackTriggered = false;
