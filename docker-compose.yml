@@ -57,6 +57,13 @@ services:
       # a newly added key reads as NULL no matter what the .env says — the same
       # reason horizon.php above had to be listed individually.
       - "${BACKEND_PATH:-../dash-backend}/config/system.php:/var/www/dash/config/system.php:ro"
+      # Carries the `kiosk_photos` disk (app/PhotoBoothCore). That disk is rooted
+      # OUTSIDE storage/app specifically so /api/storage/{path} cannot reach a
+      # souvenir photo; unmounted, Storage::disk('kiosk_photos') resolves against
+      # the baked config and throws "Disk [kiosk_photos] does not have a
+      # configured driver" on the first upload. Same reason horizon.php and
+      # system.php above had to be listed individually.
+      - "${BACKEND_PATH:-../dash-backend}/config/filesystems.php:/var/www/dash/config/filesystems.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/phpunit.xml:/var/www/dash/phpunit.xml:ro"
       # docker/ is NOT mounted whole below either — the entrypoint reads this nginx
       # template (via envsubst) on every container start, so edits here take effect
