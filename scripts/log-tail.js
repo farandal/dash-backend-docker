@@ -66,10 +66,12 @@ if (!['laravel', 'horizon', 'reverb', 'ai-agents', 'container'].includes(logtype
 // "ai-agents" is date-suffixed (ai-agents-YYYY-MM-DD.log), so we need to find
 // today's file dynamically. If it doesn't exist yet, we wait for it.
 let logFiles = LOG_FILES[logtype];
+let aiAgentsLogFile = null;
 if (logtype === 'ai-agents') {
   // Find today's ai-agents log file
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  logFiles = [`${LOG_DIR}/ai-agents-${today}.log`];
+  aiAgentsLogFile = `${LOG_DIR}/ai-agents-${today}.log`;
+  logFiles = [aiAgentsLogFile];
 }
 
 const args = logtype === 'container'
@@ -77,6 +79,23 @@ const args = logtype === 'container'
   : ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'tail', '-f', ...logFiles];
 
 waitForContainer(project);
+
+// For ai-agents logs, wait for the file to exist before trying to tail it
+// (it's only created when there's actual AI agent activity)
+if (aiAgentsLogFile) {
+  let announced = false;
+  for (;;) {
+    const check = spawnSync('docker', ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'test', '-f', aiAgentsLogFile], {
+      cwd: PROJECT_DIR,
+    });
+    if (check.status === 0) break;
+    if (!announced) {
+      console.log(`[log-tail] ${project}/ai-agents: log file doesn't exist yet (no activity), waiting...`);
+      announced = true;
+    }
+    spawnSync('sleep', [String(WAIT_POLL_MS / 1000)]);
+  }
+}
 
 console.log(`[log-tail] ${project}/${logtype}: docker ${args.join(' ')}`);
 
