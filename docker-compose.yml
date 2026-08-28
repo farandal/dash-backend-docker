@@ -64,6 +64,7 @@ services:
       # configured driver" on the first upload. Same reason horizon.php and
       # system.php above had to be listed individually.
       - "${BACKEND_PATH:-../dash-backend}/config/filesystems.php:/var/www/dash/config/filesystems.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/app.php:/var/www/dash/config/app.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/phpunit.xml:/var/www/dash/phpunit.xml:ro"
       # docker/ is NOT mounted whole below either — the entrypoint reads this nginx
       # template (via envsubst) on every container start, so edits here take effect
