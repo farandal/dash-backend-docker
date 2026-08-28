@@ -14,16 +14,19 @@ let envFile = '.env';
 let hostnameArg = '';
 let updateEnv = true;
 let envSuffix = '';
+let tunnelNameArg = '';
+let tunnelTokenFileArg = '';
 
 function usage() {
   console.log(`Usage:
   ./scripts/cloudflare-tunnel.sh [--env-file FILE] [--hostname HOST] [--no-update-env] [--env-suffix SUFFIX]
-  node ./scripts/cloudflare-tunnel.js [--env-file FILE] [--hostname HOST] [--no-update-env] [--env-suffix SUFFIX]
+  node ./scripts/cloudflare-tunnel.js [--env-file FILE] [--hostname HOST] [--no-update-env] [--env-suffix SUFFIX] [--tunnel-name NAME] [--tunnel-token-file FILE]
 
 Examples:
   ./scripts/cloudflare-tunnel.sh
   node ./scripts/cloudflare-tunnel.js --hostname dev-local-api.vanexa.com
   node ./scripts/cloudflare-tunnel.js --env-file .env --no-update-env
+  node ./scripts/cloudflare-tunnel.js --env-file .env.kitchntabs --env-suffix STAGING --tunnel-name kitchntabs-staging-server --tunnel-token-file ~/.cloudflared/token
 
 Behavior:
   - Uses APP_PORT from the env file (default 8000).
@@ -96,6 +99,26 @@ function parseArgs(argv) {
         throw new Error('--env-suffix requires a value');
       }
       envSuffix = val.trim().toUpperCase();
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--tunnel-name') {
+      const val = argv[i + 1];
+      if (!val) {
+        throw new Error('--tunnel-name requires a value');
+      }
+      tunnelNameArg = val;
+      i += 1;
+      continue;
+    }
+
+    if (arg === '--tunnel-token-file') {
+      const val = argv[i + 1];
+      if (!val) {
+        throw new Error('--tunnel-token-file requires a value');
+      }
+      tunnelTokenFileArg = val;
       i += 1;
       continue;
     }
@@ -431,7 +454,7 @@ async function runMultiRouteTunnel({ parsed, routes }) {
   const accountId = parsed.values.CF_ACCOUNT_ID || '';
   const zoneName = parsed.values.CF_ZONE_NAME || '';
   const zoneId = parsed.values.CF_ZONE_ID || '';
-  const tunnelTokenFile = parsed.values.CF_TUNNEL_TOKEN_FILE || '';
+  const tunnelTokenFile = tunnelTokenFileArg || parsed.values.CF_TUNNEL_TOKEN_FILE || '';
   let tunnelToken = parsed.values.CF_TUNNEL_TOKEN || parsed.values.CLOUDFLARE_TUNNEL_TOKEN || '';
 
   if (!apiToken || !accountId) {
@@ -443,7 +466,7 @@ async function runMultiRouteTunnel({ parsed, routes }) {
   let tunnelId = '';
 
   if (!tunnelToken && !tunnelTokenFile) {
-    const tunnelName = parsed.values.CF_TUNNEL_NAME || 'dash-dev';
+    const tunnelName = tunnelNameArg || parsed.values.CF_TUNNEL_NAME || 'dash-dev';
     console.log(`No CF_TUNNEL_TOKEN configured — creating/looking up named tunnel "${tunnelName}" via the Cloudflare API.`);
     const created = await ensureNamedTunnel({ apiToken, accountId, tunnelName });
     tunnelId = created.tunnelId;
@@ -731,7 +754,7 @@ async function main() {
   const appPort = parsed.values.APP_PORT || '8000';
   const hostnameEnv = parsed.values.CF_TUNNEL_HOSTNAME || '';
   const hostname = hostnameArg || hostnameEnv;
-  const tunnelTokenFile = parsed.values.CF_TUNNEL_TOKEN_FILE || '';
+  const tunnelTokenFile = tunnelTokenFileArg || parsed.values.CF_TUNNEL_TOKEN_FILE || '';
   const tunnelToken =
     parsed.values.CF_TUNNEL_TOKEN || parsed.values.CLOUDFLARE_TUNNEL_TOKEN || '';
 
