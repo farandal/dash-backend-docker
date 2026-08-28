@@ -7,6 +7,9 @@ env.*
 !.env.example
 !.env.local.example
 !env.local.example
+
+# Backup files
+*-backup*.zip
 .env-backup*.zip
 
 # Generated documentation and test reports
