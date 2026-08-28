@@ -6,7 +6,7 @@
 // `pm2 monit` then gives a real-time split-pane dashboard across all of them.
 // Usage: node scripts/log-tail.js <project> <logtype>
 //   project: kitchntabs | vanexa
-//   logtype: laravel | horizon | reverb | container
+//   logtype: laravel | horizon | reverb | ai-agents | container
 
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
@@ -43,17 +43,18 @@ const LOG_FILES = {
   laravel: [`${LOG_DIR}/laravel.log`],
   horizon: [`${LOG_DIR}/supervisor-horizon.log`, `${LOG_DIR}/supervisor-horizon-error.log`],
   reverb: [`${LOG_DIR}/supervisor-reverb.log`, `${LOG_DIR}/supervisor-reverb-error.log`],
+  'ai-agents': null, // resolved dynamically below (date-suffixed file)
 };
 
 const project = process.argv[2];
 const logtype = process.argv[3];
 
 if (!['kitchntabs', 'vanexa'].includes(project)) {
-  console.error(`Unknown project "${project}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|container>`);
+  console.error(`Unknown project "${project}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|ai-agents|container>`);
   process.exit(1);
 }
-if (!['laravel', 'horizon', 'reverb', 'container'].includes(logtype)) {
-  console.error(`Unknown logtype "${logtype}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|container>`);
+if (!['laravel', 'horizon', 'reverb', 'ai-agents', 'container'].includes(logtype)) {
+  console.error(`Unknown logtype "${logtype}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|ai-agents|container>`);
   process.exit(1);
 }
 
@@ -61,9 +62,19 @@ if (!['laravel', 'horizon', 'reverb', 'container'].includes(logtype)) {
 // trace) via `docker compose logs`, not a file inside it — everything else is
 // a `tail -f` on a supervisor-managed log file, same paths QUICK_COMMANDS.md
 // documents for manual use.
+//
+// "ai-agents" is date-suffixed (ai-agents-YYYY-MM-DD.log), so we need to find
+// today's file dynamically. If it doesn't exist yet, we wait for it.
+let logFiles = LOG_FILES[logtype];
+if (logtype === 'ai-agents') {
+  // Find today's ai-agents log file
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  logFiles = [`${LOG_DIR}/ai-agents-${today}.log`];
+}
+
 const args = logtype === 'container'
   ? ['compose', '--env-file', `.env.${project}`, 'logs', '-f', '--tail', '50', 'app']
-  : ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'tail', '-f', ...LOG_FILES[logtype]];
+  : ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'tail', '-f', ...logFiles];
 
 waitForContainer(project);
 
