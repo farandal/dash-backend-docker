@@ -21,7 +21,18 @@ Three domains share the same `dash-backend` core image. Each domain has its own:
 - Composer domain layer (mounted at `/var/www/dash/domain`)
 - PostgreSQL database (separate credentials)
 - Runtime storage (assets, logs, cache — named folder under `./storage/`)
+- Compiled caches (`BOOTSTRAP_CACHE_PATH` → `./storage/<domain>/bootstrap-cache`)
 - Env file pair (`.env.<domain>` + `.env.<domain>.local`)
+
+> **Why the compiled caches are per-domain.** `bootstrap/` is mounted from the
+> SHARED `dash-backend` core, and `bootstrap/cache/` is the only read-write
+> state in it — `entrypoint.sh` rewrites `routes-v7.php` and `config.php` on
+> every container start. Left shared, the last stack to boot owns both
+> projects' routes and config: running kitchntabs and vanexa together made
+> vanexa serve kitchntabs' cached routes, 404-ing every `/api/lab/*` path with
+> a log line blaming a controller that only exists in the other domain. If you
+> ever see a whole product's routes 404 at once, `php artisan route:clear` is
+> the immediate unblock.
 
 | Domain | Compose env | App env | DB | Domain repo |
 |---|---|---|---|---|

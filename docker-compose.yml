@@ -80,6 +80,27 @@ services:
       # core mounts (e.g. routes/system.php, the SystemPaymentGateway feature files).
       - "${BACKEND_PATH:-../dash-backend}/app:/var/www/dash/app:delegated"
       - "${BACKEND_PATH:-../dash-backend}/bootstrap:/var/www/dash/bootstrap:delegated"
+      # PER-PROJECT, nested over the shared bootstrap/ above — and this one is
+      # not optional when two domains run side by side.
+      #
+      # bootstrap/cache is the only READ-WRITE state in the core mount, and
+      # entrypoint.sh rewrites all of it on every single container start:
+      #
+      #     rm -f bootstrap/cache/routes-v7.php && php artisan route:cache
+      #     php artisan config:cache
+      #
+      # Shared, that means whichever stack booted LAST owns the route cache and
+      # the config cache for BOTH. Starting kitchntabs while vanexa was up left
+      # vanexa serving kitchntabs' cached routes: every /api/lab/* path 404'd at
+      # once, and the log blamed a controller class that only exists in the
+      # other domain. config.php is worse and quieter — it freezes the other
+      # project's DB name, APP_URL and Reverb credentials into this container.
+      #
+      # Nesting a mount over a subdirectory of an existing mount is what keeps
+      # the rest of bootstrap/ shared (app.php, providers.php) while giving each
+      # project its own cache, exactly as STORAGE_PATH and DB_STORAGE_PATH
+      # already do for storage and Postgres.
+      - "${BOOTSTRAP_CACHE_PATH:-./storage/dash-backend-domain/bootstrap-cache}:/var/www/dash/bootstrap/cache:delegated"
       - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
       - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/dash/lang:delegated"
       - "${BACKEND_PATH:-../dash-backend}/public:/var/www/dash/public:delegated"
