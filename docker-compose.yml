@@ -100,7 +100,14 @@ services:
       # the rest of bootstrap/ shared (app.php, providers.php) while giving each
       # project its own cache, exactly as STORAGE_PATH and DB_STORAGE_PATH
       # already do for storage and Postgres.
-      - "${BOOTSTRAP_CACHE_PATH:-./storage/dash-backend-domain/bootstrap-cache}:/var/www/dash/bootstrap/cache:delegated"
+      #
+      # DERIVED from STORAGE_PATH rather than requiring its own variable, so it
+      # cannot be forgotten: every project already sets STORAGE_PATH (that is
+      # what isolates storage/), and .env.<project> files are untracked — a fix
+      # that lived only in those would not survive a fresh clone or reach a new
+      # domain. BOOTSTRAP_CACHE_PATH remains available to override the location
+      # explicitly; it just is not needed for the isolation to hold.
+      - "${BOOTSTRAP_CACHE_PATH:-${STORAGE_PATH:-./storage/dash-backend-domain}/bootstrap-cache}:/var/www/dash/bootstrap/cache:delegated"
       - "${BACKEND_PATH:-../dash-backend}/database:/var/www/dash/database:delegated"
       - "${BACKEND_PATH:-../dash-backend}/lang:/var/www/dash/lang:delegated"
       - "${BACKEND_PATH:-../dash-backend}/public:/var/www/dash/public:delegated"

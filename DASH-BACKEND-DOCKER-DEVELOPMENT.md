@@ -21,7 +21,7 @@ Three domains share the same `dash-backend` core image. Each domain has its own:
 - Composer domain layer (mounted at `/var/www/dash/domain`)
 - PostgreSQL database (separate credentials)
 - Runtime storage (assets, logs, cache — named folder under `./storage/`)
-- Compiled caches (`BOOTSTRAP_CACHE_PATH` → `./storage/<domain>/bootstrap-cache`)
+- Compiled caches (`<STORAGE_PATH>/bootstrap-cache`, derived automatically)
 - Env file pair (`.env.<domain>` + `.env.<domain>.local`)
 
 > **Why the compiled caches are per-domain.** `bootstrap/` is mounted from the
@@ -33,6 +33,11 @@ Three domains share the same `dash-backend` core image. Each domain has its own:
 > a log line blaming a controller that only exists in the other domain. If you
 > ever see a whole product's routes 404 at once, `php artisan route:clear` is
 > the immediate unblock.
+>
+> The path is DERIVED from `STORAGE_PATH` rather than needing a variable of its
+> own, so a new domain gets the isolation for free — `.env.<domain>` files are
+> untracked, and a fix that lived only in one would not survive a fresh clone.
+> Set `BOOTSTRAP_CACHE_PATH` only to move it somewhere else.
 
 | Domain | Compose env | App env | DB | Domain repo |
 |---|---|---|---|---|
