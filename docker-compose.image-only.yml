@@ -1,0 +1,52 @@
+# Overlay for running purely off a published Docker Hub image, with NO
+# `dash-backend` checkout on disk at all.
+#
+# docker-compose.yml's `app` service unconditionally bind-mounts ~10 files/dirs
+# from ${BACKEND_PATH:-../dash-backend} — 8 individual "patched" config files,
+# phpunit.xml, the nginx template, and (if left uncommented) the whole core
+# source tree. If dash-backend doesn't exist on disk, Docker does NOT fail
+# loudly: it silently creates empty directories at each missing host path and
+# bind-mounts those instead — which, for the core-source block, mounts empty
+# dirs straight over the image's own baked-in app/routes/config/etc. `pgsql`
+# and `pgsql_setup` have the same problem with database/create-testing-db.sh,
+# except that one DOES fail loudly: pgsql_setup's entrypoint tries to execute
+# a script that no longer exists, crash-loops, and `app` (which depends_on
+# pgsql_setup: condition: service_healthy) never starts.
+#
+# This overlay drops every ${BACKEND_PATH} mount and lets the image's own
+# baked-in app/routes/config/database/public/resources/tests + vendor/ serve
+# as-is (per README.md "CI Build Flow" — that's everything Dockerfile.core.production
+# already bakes in). The test-only database that create-testing-db.sh would
+# have created is simply skipped here — leave DB_DATABASE_TEST unset/blank in
+# whichever .env.<project> you use with this overlay, so pgsql_setup's own
+# healthcheck (which already no-ops the test-DB check when that var is empty)
+# passes on the main database alone.
+#
+# Usage:
+#   # in .env.<project>, point DASH_IMAGE at a real published tag, e.g.:
+#   #   DASH_IMAGE=farandal/dash-backend:1.0.0-core
+#   docker compose -f docker-compose.yml -f docker-compose.image-only.yml \
+#     --env-file .env.<project> up -d
+
+services:
+  app:
+    volumes:
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env"
+      - "${ENV_FILE:-../dash-backend/.env.dash.local}:/var/www/dash/.env.production"
+      - "${DOMAIN_PATH:-../dash-backend-domain}:/var/www/dash/domain:delegated"
+      - "${DOMAIN_CONFIG_LAYERS_PATH:-./domain-config-layers}:/var/www/dash/domain-config-layers:delegated"
+      - "${STORAGE_PATH:-./storage/dash-backend-domain}:/var/www/dash/storage:delegated"
+      - "dash-composer-cache:/.composer"
+      - ./reports:/var/www/dash/reports
+      - "${BOOTSTRAP_CACHE_PATH:-${STORAGE_PATH:-./storage/dash-backend-domain}/bootstrap-cache}:/var/www/dash/bootstrap/cache:delegated"
+
+  pgsql:
+    volumes:
+      - "${DB_STORAGE_PATH:-./storage/pgsql-data}:/var/lib/postgresql:delegated"
+
+  pgsql_setup:
+    volumes: []
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - "tail -f /dev/null"

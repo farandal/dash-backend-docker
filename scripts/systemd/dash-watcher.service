@@ -1,0 +1,23 @@
+[Unit]
+Description=DASH backend git watcher (auto-pull kitchntabs/vanexa)
+# docker.service on Linux starts at boot with no login session required —
+# unlike Docker Desktop on macOS, this dependency alone is enough.
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fablabadmin
+Group=fablabadmin
+WorkingDirectory=/home/fablabadmin/dash-backend-docker
+EnvironmentFile=/home/fablabadmin/dash-backend-docker/scripts/systemd/dash-watcher.env
+ExecStart=/usr/bin/node scripts/git-watcher.js
+Restart=always
+RestartSec=5
+# git-watcher.js already blocks on `docker info` before its first real cycle,
+# but this keeps systemd's own view of "up" honest if that ever changes.
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

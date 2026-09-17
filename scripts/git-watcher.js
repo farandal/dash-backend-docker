@@ -2,26 +2,28 @@
 
 'use strict';
 
-// Polls dash-backend (core) + the two domain repos for new commits on `development`
-// every 60s, and if anything changed, brings the running staging containers up to
-// date:
+// Polls dash-backend (core) + the two domain repos for new commits on whichever
+// branch DASH_WATCHER_BRANCH names (defaults to `development`) every 60s, and if
+// anything changed, brings the running staging containers up to date:
 //   - domain repo changed  -> git pull (already live-mounted), composer/migrate,
 //                             then supervisorctl restart (no container downtime)
 //   - dash-backend changed -> rebuild the core image, --force-recreate the app
 //                             container for BOTH projects (they share one image),
 //                             then composer/migrate on each
 //
-// Deliberately not fancy: no SHA-tracking/retry state, no notifications, no config
-// file. Meant to run under pm2 (`pnpm exec pm2 start scripts/git-watcher.js --name
-// dash-watcher`), which supervises restart-on-crash and (via `pm2 startup`) boot
-// persistence, so this script only owns the poll loop itself.
+// Deliberately not fancy: no SHA-tracking/retry state, no notifications. Meant to
+// run under a process supervisor (pm2 on macOS, systemd on Linux — see
+// dash-watcher.service / DASH_WATCHER_BRANCH in an EnvironmentFile) that handles
+// restart-on-crash and boot persistence, so this script only owns the poll loop.
 
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const POLL_INTERVAL_MS = 60_000;
-const BRANCH = 'development';
+// Config-driven so switching which branch preprod tracks (e.g. development ->
+// production) is a supervisor-level env change, not a code edit + redeploy.
+const BRANCH = process.env.DASH_WATCHER_BRANCH || 'development';
 
 // Domain repos map 1:1 to a running docker-compose project; dash-backend (core) is
 // shared and, when it changes, affects every project below.
