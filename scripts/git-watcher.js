@@ -15,6 +15,11 @@
 // run under a process supervisor (pm2 on macOS, systemd on Linux — see
 // dash-watcher.service / DASH_WATCHER_BRANCH in an EnvironmentFile) that handles
 // restart-on-crash and boot persistence, so this script only owns the poll loop.
+//
+// DASH_WATCHER_SKIP_CORE=1 disables dash-backend tracking entirely (for a host
+// running purely off a published DASH_IMAGE, e.g. with docker-compose.image-only.yml,
+// with no dash-backend checkout on disk at all) — without it, every cycle would
+// fail its `git fetch` against a path that doesn't exist and warn forever.
 
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -24,6 +29,7 @@ const POLL_INTERVAL_MS = 60_000;
 // Config-driven so switching which branch preprod tracks (e.g. development ->
 // production) is a supervisor-level env change, not a code edit + redeploy.
 const BRANCH = process.env.DASH_WATCHER_BRANCH || 'development';
+const SKIP_CORE = process.env.DASH_WATCHER_SKIP_CORE === '1';
 
 // Domain repos map 1:1 to a running docker-compose project; dash-backend (core) is
 // shared and, when it changes, affects every project below.
@@ -220,7 +226,7 @@ function runCycle() {
   isRunning = true;
 
   try {
-    const coreResult = syncRepo(CORE_REPO);
+    const coreResult = SKIP_CORE ? 'none' : syncRepo(CORE_REPO);
     const coreChanged = coreResult === 'pulled';
 
     if (coreChanged) {
