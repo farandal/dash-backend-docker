@@ -65,6 +65,15 @@ services:
       # system.php above had to be listed individually.
       - "${BACKEND_PATH:-../dash-backend}/config/filesystems.php:/var/www/dash/config/filesystems.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/config/app.php:/var/www/dash/config/app.php:ro"
+      # Carries subscription_plans.addon_formats (App\IntegrationCore's own
+      # addon entries included) and services.facebook (the Instagram OAuth
+      # client). Unmounted, config('subscription_plans.addon_formats') and
+      # config('services.facebook.*') both resolve against the baked image,
+      # so a newly added addon/service silently reads as absent/null no
+      # matter what the file on disk says - same reason horizon.php/
+      # system.php/filesystems.php above had to be listed individually.
+      - "${BACKEND_PATH:-../dash-backend}/config/subscription_plans.php:/var/www/dash/config/subscription_plans.php:ro"
+      - "${BACKEND_PATH:-../dash-backend}/config/services.php:/var/www/dash/config/services.php:ro"
       - "${BACKEND_PATH:-../dash-backend}/phpunit.xml:/var/www/dash/phpunit.xml:ro"
       # docker/ is NOT mounted whole below either — the entrypoint reads this nginx
       # template (via envsubst) on every container start, so edits here take effect
