@@ -171,6 +171,13 @@ server {
 
 # Part 2 — Setup procedure
 
+> **Read Part 4 first.** This procedure was written before the first install and several steps were wrong or
+> incomplete in practice: blank `DB_DATABASE_TEST` (2.3, corrected), the `docker-compose.image-only.yml`
+> overlay (2.5) does not work on Compose v5, the wrong image can be built, env file modes and storage
+> ownership need care, and the RAG vector index needs non-filterable metadata keys. The install that actually
+> works is **staging's model** (base compose, `local/dash-backend-core:latest` built on the host, real core
+> checkout, the git watcher), described in 4.5–4.9. Part 4.9 is the current state.
+
 Assumes Part 1 is complete. Commands run on the new machine as the service user.
 `<host>` is the machine, `$PREVIEW_DIR` is where the repos live (example: `~/kitchntabs`).
 
@@ -233,7 +240,7 @@ Values that **must** change from staging, per project:
 | `.env.<project>` | `DASH_IMAGE` | A **pinned published tag**, e.g. `farandal/dash-backend:<tag>-core`. Never `:latest`. |
 | `.env.<project>` | `ENV_FILE` | `.env.<project>.preview` |
 | `.env.<project>` | `DOMAIN_PATH`, `STORAGE_PATH`, `DB_STORAGE_PATH` | Keep the staging values; they are relative to the repo |
-| `.env.<project>` | `DB_DATABASE_TEST` | **Leave blank** (image-only mode has no test-DB script) |
+| `.env.<project>` | `DB_DATABASE_TEST` | **Do NOT leave blank** — Compose's `${DB_DATABASE_TEST:-dash_test}` treats blank as unset and substitutes `dash_test`, so `pgsql_setup` never turns healthy and `app` never starts. Keep the value (e.g. `kt_dev_db_test`) and create that empty database (see 4.6). |
 | `.env.<project>` | `CF_TUNNEL_HOSTNAME_API_PREVIEW`, `CF_TUNNEL_HOSTNAME_WS_PREVIEW` | The preview hostnames from 1.1 |
 | `.env.<project>` | `CF_TUNNEL_NAME` | `kitchntabs-preview-server` |
 | `.env.<project>` | `CF_TUNNEL_TOKEN` | **Blank.** The token lives in a file outside the repo (2.4). |
@@ -470,3 +477,336 @@ All of these have happened on staging.
   without opening 22, expose SSH through a Cloudflare route protected by a Cloudflare Access
   policy, as on staging, rather than publishing port 22.
 - Preview must not reuse staging's `APP_KEY`, database credentials, or AWS/payment keys.
+
+---
+
+# Part 4 — Record of the actual preview installation (2026-09-25)
+
+> **Update 2026-09-26.** The install described in 4.5–4.6 (image tag `local/dash-backend:v1.4.0-core`, the
+> `dash-backend-src` checkout, `docker-compose.image-only.yml`, exporting `ENV_FILE`) was later **converged onto
+> staging's model** so the git watcher could run and the core image could be built on the host. Where 4.5–4.6
+> and 4.9 differ, **4.9 is the current state**.
+
+What was really done on the first preview install, in order, with what went wrong. Read this
+before repeating the procedure: several steps in Parts 1–3 needed correcting (marked **⚠ differs
+from Part 2**). No secret values are recorded here.
+
+| | |
+|---|---|
+| Machine | `172.20.20.80`, Ubuntu 24.04.2, 8 vCPU, **15 GB RAM**, 98 GB disk (Part 1.3 asks for 32 GB / 500 GB) |
+| Service user | `fablabadmin` (in `docker` and `sudo`), repos under `~/` |
+| Stacks | KitchnTabs (`dash_image_*`, ports 25000/25001) and Vanexa (`vanexa_image_*`, 25100/26001) |
+| Tracks | branch `production`, tag **`v1.4.0`** (staging tracks `development`) |
+| Exposure | Cloudflare Tunnel `kitchntabs-preview-server`, final hostnames `api-preview.*` / `ws-preview.*` |
+
+## 4.1 Starting state
+
+Docker 29 and Compose 5.5 were installed, and the Postgres/Redis/MailHog containers of both
+projects had been running for 8 days, but there was **no app container**, no `cloudflared`, no
+`jq`/node/pnpm, and preview env files that were still copies of the old dev values. The domain
+repos were on `production`; `~/dash-backend` was a stale, non-git directory (see 4.6). GitHub
+access is over HTTPS with a token embedded in each remote URL, not SSH deploy keys.
+
+## 4.2 Release: development → production, tagged v1.4.0
+
+Preview follows `production`, so the first release was cut before installing.
+
+| Repo | Action | Commit |
+|---|---|---|
+| `dash-backend` | fast-forward `production` to `development`, tag `v1.4.0` | `d10d99a` |
+| `vanexa-backend-domain` (remote `farandal/fablabos`) | fast-forward, tag `v1.4.0` | `1c5e7a2` |
+| `kitchntabs-backend-domain` | branches were already identical, tag `v1.4.0` | `756030d` |
+| `dash-backend-docker` | **no `production` branch existed**, created from `development`, tag `v1.4.0` | `19b1237` |
+
+Pushes were fast-forward only. Caveats:
+
+- The `v1.4.0` tag in `dash-backend` was **moved once** (force-updated) to include commit
+  `d10d99a` (see 4.5). It was minutes old and unused, but anyone who fetched the first `v1.4.0`
+  must `git fetch --tags --force`.
+- Pushing to `development` makes the **staging** git watcher redeploy. Staging containers restarted
+  shortly after; a brief staging tunnel outage was reported at about the same time. The link is
+  probable but not confirmed. Warn whoever uses staging before pushing.
+- Shell trap while doing this: in zsh `"$DEV:refs/heads/production"` is read as a `:r` modifier.
+  Use `"${DEV}:refs/heads/production"`.
+
+## 4.3 AWS: four isolated buckets and a dedicated knowledge base
+
+Nothing in staging's env files names a bucket (staging uses `MEDIA_DISK=local`), so the buckets
+were derived from the code (`config/filesystems.php`, `config/lab_rag.php`). Everything is in
+`us-east-2`, account `635862864028`, created with the `KitchenTabs` admin profile.
+
+| Purpose | Env variable | Preview resource | Staging/prod equivalent |
+|---|---|---|---|
+| Public media | `AWS_BUCKET` | `kitchntabs-preview` | `kitchntabs-dev` |
+| Private files | `AWS_PRIVATE_BUCKET` | `kitchntabs-preview-private` | `kitchntabs-dev-private` |
+| RAG documents | `LAB_RAG_DOCUMENTS_BUCKET` | `vanexa-preview-lab-documents` | `vanexa-lab-documents` |
+| RAG vectors (S3 Vectors) | `LAB_RAG_VECTOR_BUCKET` | `vanexa-preview-lab-kb-vectors` | `vanexa-lab-kb-vectors` |
+
+Settings copied from the dev buckets: SSE-AES256, `BucketOwnerEnforced`, no versioning. The
+private and RAG buckets block all public access. `kitchntabs-preview` mirrors dev (ACLs blocked,
+public policy allowed) but its policy grants anonymous `s3:GetObject` **only** — dev also grants
+`ListBucket`, which was not copied.
+
+The RAG side was created with `vanexa-ci-cdk/scripts/provision-lab-rag.sh`, run with names
+overridden by environment variables (`DOC_BUCKET`, `VECTOR_BUCKET`, `ROLE_NAME`, `KB_NAME`,
+`DATA_SOURCE_NAME`), producing role `vanexa-preview-lab-kb-role`, KB `S2Q8P5IUUH` and data
+source **`MCHFZMQLRK`** (the first data source, `IQWFKSFN3K`, was deleted and replaced — see
+4.8). Caveats:
+
+- **⚠ The vector index must be created with non-filterable text keys.** The script originally
+  created it without `--metadata-configuration`; ingestion then failed for some documents with
+  *"Filterable metadata must have at most 2048 bytes (S3 Vectors)"* (10–15 of 98, no per-document
+  reason shown, and retries did not help). An index cannot be altered, so it was deleted and
+  recreated with `{"nonFilterableMetadataKeys":["AMAZON_BEDROCK_TEXT","AMAZON_BEDROCK_METADATA"]}`,
+  the data source was recreated, and ingestion then indexed 98/98. The script now does this, but
+  staging's index (`vanexa-lab-kb-vectors`) was created without it and currently works only because
+  its chunks happen to fit; expect the same failure there on larger or accented documents.
+
+- The script needed two edits, **still uncommitted in `vanexa-ci-cdk` for review**: those names
+  are now overridable (defaults unchanged), and a `KB_MULTIMODAL=false` switch was added.
+- AWS now rejects the script's multimodal setup ("supplemental data storage bucket contains a
+  sub-folder"), so the preview KB was created with **default text-layer parsing and no
+  supplemental storage** (`KB_MULTIMODAL=false`) — the same as staging's existing KB. Scanned or
+  image-only PDFs are not indexed. The unfixed script fails the same way for anyone creating a
+  new multimodal KB.
+- `LAB_RAG_TENANT_ISOLATION=false` on preview for now (shared KB). The per-tenant switch and role
+  are in place if you want it on.
+- **The app's AWS key is staging's key, which has `AdministratorAccess`.** The buckets are
+  isolated by name, but the credential is not. A key scoped to the preview buckets is the real
+  isolation and is still to do.
+- Region: production runs S3 and Bedrock both in `us-east-2`, so preview sets `AWS_REGION` and
+  `AWS_DEFAULT_REGION` to `us-east-2` (Vanexa staging uses `us-east-1`). Vanexa **agent turns on
+  Bedrock in `us-east-2` have not been tested** here.
+- `AWS_URL` and `AWS_ENDPOINT` default to the **dev bucket** in `config/filesystems.php`. Setting
+  only `AWS_BUCKET` uploads to the new bucket but serves URLs from `kitchntabs-dev`. Set both.
+
+## 4.4 Cloudflare tunnel and DNS
+
+Created with the Cloudflare API (procedure 2.4): tunnel `kitchntabs-preview-server`
+(`f9e193e0-039d-401e-bfe2-ae6e0f47cd0a`), ingress `api-preview.kitchntabs.com`→`:25000`,
+`ws-preview.kitchntabs.com`→`:25001`, `api-preview.vanexa.cl`→`:25100`, `ws-preview.vanexa.cl`→`:26001`,
+then a `404` catch-all; four proxied CNAMEs to `<tunnel-id>.cfargotunnel.com`. The final hostnames
+are used from day one, so switching to direct DNS later is a record change with no app or
+frontend change. `cloudflared` (deb, v2026.9.3) runs as `cloudflared-preview.service` from
+`/etc/cloudflared/preview-token` (mode 600); the tunnel reported healthy with 4 connections.
+
+- **⚠ The staging Cloudflare API token was reused** to create the tunnel and DNS. It was used only
+  from the operator's workstation and never stored on the preview machine. A separate preview
+  token was requested afterwards and is still to be created; rotate/replace as needed. The
+  machine only holds the tunnel's own connector token.
+- Both zones already existed in the same Cloudflare account and no preview record existed
+  beforehand; check that first, since creating a duplicate name would fail or overwrite.
+- WebSockets are on the **`ws-preview.*` hostname** (`/app/<key>`), not on the API host. The
+  in-app `/ws` test page connects to `REVERB_HOST`. Test the upgrade over **HTTP/1.1**
+  (`curl --http1.1`); over HTTP/2 the handshake returns 500 and looks like a failure.
+
+## 4.5 The core image (the wrong turn)
+
+`DASH_IMAGE` was first **`local/dash-backend:v1.4.0-core`** (superseded by `local/dash-backend-core:latest`, see 4.9), built on the preview machine (amd64)
+from the tagged core:
+
+```bash
+git clone --branch v1.4.0 --depth 1 <dash-backend url> ~/dash-backend-src
+cd ~/dash-backend-src && ./docker-publish-core.sh --hub-user local --tag v1.4.0-core --skip-push
+```
+
+This builds `Dockerfile.core.production` (PHP 8.5 on Debian, nginx + php-fpm, supervisor programs
+Horizon, Reverb and the scheduler, app user `dash`). Staging's image is a locally built
+arm64 image and cannot be copied to an x86 host, hence the local build.
+
+**⚠ Do not build `docker/php8.3/Dockerfile.core`.** That is the *dev/sail* image: it serves with
+`php -S`, runs only one supervisor program and runs PHP as user `sail` (uid 1337). It was built
+first by mistake, cost roughly 40 minutes, and produced a container with no Horizon or Reverb.
+Its `composer install` also failed (`phpoffice/phpspreadsheet 1.30.x` requires `<8.5.0` but
+`composer.json` pins platform PHP 8.5.0), which led to commit `d10d99a`
+(`--ignore-platform-req=php` in that Dockerfile and in `start-container`). That change is
+harmless but **was not needed for the production image**, which runs `composer update -W` and
+resolves it. Keep or revert it deliberately; the underlying fix is bumping `maatwebsite/excel`
+and `phpspreadsheet`.
+
+## 4.6 Env files, compose fixes and first start
+
+Env changes (backups of the previous files were left as `.env.<project>[.preview].bak-<timestamp>`):
+
+- `.env.<project>` (compose): `DASH_IMAGE`, `ENV_FILE=.env.<project>.preview`, `CF_TUNNEL_NAME`,
+  new `DB_PASSWORD`, `CF_TUNNEL_TOKEN` blank, **`BACKEND_PATH=../dash-backend-src`** (see below).
+- `.env.<project>.preview` (app): new `APP_KEY`, new `DB_PASSWORD`, region `us-east-2`,
+  `MEDIA_DISK=s3`, `MEDIA_PRIVATE_DISK=s3-private`, the four bucket variables plus `AWS_URL` and
+  `AWS_ENDPOINT`; Vanexa also gets the `LAB_RAG_*` set, `SOCIAL_FEED_ENABLED=true` and a
+  `SANCTUM_STATEFUL_DOMAINS` list.
+- The database password was rotated **in place** with `ALTER USER` on the existing Postgres
+  container (the volume was empty), before recreating the containers. Redis's password was **not**
+  rotated and is still shared with the old files.
+
+Problems hit, in the order met, each of which SETUP Parts 2–3 did not mention:
+
+1. **`pgsql_setup` never healthy → `app` stays `Created`.** Blank `DB_DATABASE_TEST` is replaced by
+   `dash_test` (see the corrected 2.3 row). Fix: keep `kt_dev_db_test` / `vx_dev_db_test` and
+   create those empty databases (`CREATE DATABASE … OWNER <user>` via `psql` in the pgsql container).
+2. **`OCI runtime … not a directory` on `phpunit.xml`.** `docker-compose.image-only.yml` says it
+   "drops every `${BACKEND_PATH}` mount", but on Compose v5 the overlay's `volumes` are **merged**
+   with the base file's, so the base mounts remain. With no `dash-backend` checkout Docker had
+   created stale empty directories at those paths, and the mount failed. Fix used:
+   `BACKEND_PATH=../dash-backend-src`, i.e. the checkout the image was built from, so the mounted
+   files equal the image's own. **Consequence: `~/dash-backend-src` must always be at the same tag as
+   `DASH_IMAGE`**, so this is not truly "image-only". Fixing the overlay (`!override` on `volumes`)
+   is a follow-up in this repo.
+3. **`docs/api-docs` missing** → `mkdir -p docs/api-docs` (an empty dir is enough).
+4. **500 with "No application encryption key" and `APP_ENV=local`.** I had set the app env files to
+   mode `600`; PHP runs in the container as a different uid (group 1000), could not read `.env`, and
+   fell back to defaults. Use **`640`** (owner + group read, group = the service user's group).
+   Not `644` — these files hold secrets.
+5. **500 `file_put_contents(…/storage/framework/views/…): Permission denied`.** The storage
+   folders had been created by the dev image's `sail` user (uid 1337); the production image writes
+   as `dash` (uid 1000, gid 33). Fix (needs sudo), **excluding `pgsql-data`**, which belongs to Postgres:
+
+   ```bash
+   sudo find storage/<project>-backend-domain -path '*/pgsql-data' -prune -o -exec chown 1000:33 {} +
+   ```
+
+6. The entrypoint runs the migrations itself on boot (216 tables KitchnTabs, 84 Vanexa were
+   present before I ran anything); `php artisan migrate --force --seed` afterwards completed with
+   no errors.
+
+Always run `docker compose … up -d` with the matching `--env-file` (the `ENV_FILE` export turned out to be unnecessary when `--env-file` is given, see 4.9), and use
+`setsid nohup … &` for anything that outlives the SSH session. Do not use `pkill -f <pattern>`
+inside an `ssh '…'` one-liner: the pattern matches the shell's own command line and kills it.
+
+## 4.7 Verified state
+
+- Both APIs answer `200` locally and at `https://api-preview.kitchntabs.com` and
+  `https://api-preview.vanexa.cl`.
+- WebSocket upgrade returns `101` on `ws-preview.*` locally and through the tunnel.
+- Each app is configured for its preview buckets and writes, reads and deletes on the public and
+  private bucket; Vanexa reads the preview RAG bucket names and KB `S2Q8P5IUUH`.
+- Each container runs nginx, php-fpm, Horizon, Reverb and the scheduler, as on staging.
+
+**Not verified — no automated test suite was run for this install:** a real login, an agent turn on
+Bedrock in `us-east-2`, a RAG upload/ingest/search, the social-media sync, mail, and the **reboot
+test** (3.1). Do the reboot test before calling preview handed over.
+
+## 4.8 Copying tenants from staging (LDP Magazine, John Hopkins)
+
+Done on 2026-09-25 with `vanexa-backend-domain/scripts/copy-tenant-between-envs.php`
+(uncommitted at the time of writing). One tenant at a time: its tenancy, tenant, users and roles,
+subscription and marketplace links, MCP servers, Labs, documents and their selections, and (if
+present) social sources and posts. **Not copied:** session/observation/usage history, kiosk photos,
+device nodes and devices (they point at staging), API keys and Sanctum tokens.
+
+| Tenant | Result |
+|---|---|
+| LDP Magazine (3 Labs) | 1 tenancy, 1 tenant, 1 user, 225 documents, 3 social sources, 36 posts, 1 MCP server |
+| John Hopkins (1 Lab) | 1 tenancy, 1 tenant, 1 user, 3 documents, 3 MCP servers |
+
+Procedure (all steps are read-only on staging):
+
+1. **Export on staging**, inside the app container:
+   `MODE=export TENANT_NAME="<name>" OUT=/tmp/x.json php /tmp/copy-tenant.php`.
+   Encrypted values are **decrypted with staging's `APP_KEY`**, because preview has its own key:
+   `tenants.settings` / `tenancies.settings` sub-keys, `ai_agent_mcp_servers.auth_token`, and the
+   platform `ai_system_provider_keys.credentials` (DeepInfra, Apify).
+2. **Move the file** to preview through a mode-600 hop. It contains plaintext secrets and password
+   hashes; it must never be printed or committed, and is shredded on both machines afterwards.
+3. **Dry run on preview** (`MODE=import IN=… php …`, rolled back), then `APPLY=1`. Already-existing
+   primary keys are skipped, so it is re-runnable. Foreign keys are deferred and an orphan check
+   runs before commit. The two currencies differ per environment (CLP has a different UUID) and are
+   remapped by code; roles, languages, plans and marketplaces have identical integer ids in both.
+4. **Copy files** (not done by the script):
+   - RAG objects, bucket to bucket inside S3:
+     `aws s3 sync s3://vanexa-lab-documents/<tenant_id>/ s3://vanexa-preview-lab-documents/<tenant_id>/`
+     (includes the `.metadata.json` sidecars).
+   - Media (thumbnails, page images, character assets, social images) from staging's disk:
+     `aws s3 sync storage/vanexa-backend-domain/app/<tenancy_id>/ s3://kitchntabs-preview/<tenancy_id>/`
+     run **on the staging host**, which has an AWS CLI and staging's key. LDP was 313 objects, 1.99 GB.
+5. **Re-ingest** into the preview KB (`start-ingestion-job`, or dispatch `SyncLabKnowledgeBaseJob`).
+
+Caveats:
+
+- Users keep their **staging password hash**, so they log in with their staging passwords.
+- Platform credentials were copied only into rows that were empty on preview.
+- Preview runs with `LAB_RAG_TENANT_ISOLATION=false`, so all copied tenants share one KB. On staging,
+  the John Hopkins tenant is on the per-tenant KB allowlist; on preview it is not.
+- When the data source id changes, update `LAB_RAG_DATA_SOURCE_ID` in the app env **in place**
+  (rewrite the file without replacing it; `sed -i` swaps the inode and the single-file bind mount
+  keeps serving the old content) and restart the app so its cached config is rebuilt.
+- After copying, a real login and an agent turn on preview are still to be verified.
+
+## 4.9 Converging on staging's model, the watcher, and the kiosk page (2026-09-26)
+
+The request was to run the auto-update watcher on preview **and** build the core image on the host. The
+watcher (`scripts/git-watcher.js`) assumes staging's layout, so preview was moved to it.
+
+What the watcher assumes, and what that meant:
+
+| Assumption in `git-watcher.js` | Consequence on preview |
+|---|---|
+| Core checkout at `../dash-backend`, a git repo on the tracked branch, with history | `~/dash-backend` had to become a real full clone on `production` (the first install had left a root-owned, Docker-created empty tree there; it was **renamed** to `dash-backend.stale-<timestamp>`, not deleted) |
+| Runs `docker compose --env-file .env.<project>` only, with **no** `-f` overlay | The `docker-compose.image-only.yml` overlay could no longer be used; preview now runs the **base** `docker-compose.yml` like staging |
+| Builds and tags **`local/dash-backend-core:latest`** with `Dockerfile.core.production` and `INSTALL_DEV_DEPS=true` | `DASH_IMAGE=local/dash-backend-core:latest` in both `.env.<project>`; the image carries dev dependencies (as on staging) |
+| Needs `node` | Ubuntu's `nodejs` (18.19.1) installed with apt; the script uses only built-in modules, so no pnpm |
+
+Steps, in order:
+
+1. `sudo apt-get install nodejs`; renamed the stale `~/dash-backend`; `git clone --branch production` of the core
+   into `~/dash-backend` (branch `production`, `d10d99a`, clean tree).
+2. Built the image **on the host, while the old containers kept serving**, with the watcher's exact command:
+   `docker build -f Dockerfile.core.production -t local/dash-backend-core:latest --build-arg INSTALL_DEV_DEPS=true .`
+   (about 11.5 minutes cold; 860 MB image).
+3. Edited `.env.kitchntabs` and `.env.vanexa`: `DASH_IMAGE=local/dash-backend-core:latest`, `BACKEND_PATH=../dash-backend`.
+4. Recreated both apps with `docker compose --env-file .env.<project> up -d --force-recreate app` (base file only).
+   Result: 5 of 5 processes per container (nginx, php-fpm, Horizon, Reverb, scheduler), API `200`, WebSocket `101`.
+   The containers mounted the preview app env file **without `ENV_FILE` being exported**, so the earlier advice to
+   export it was unnecessary when `--env-file` is passed.
+5. Installed the watcher: `scripts/systemd/dash-watcher.env` with `DASH_WATCHER_BRANCH=production` (no
+   `DASH_WATCHER_SKIP_CORE`, core tracking is on), the shipped unit copied unchanged to
+   `/etc/systemd/system/dash-watcher.service` (it already uses `fablabadmin` and `/home/fablabadmin`),
+   `systemctl enable --now dash-watcher`. First cycles logged `no changes`.
+6. **Tested the domain path for real:** `git reset --hard HEAD~1` in `~/vanexa-backend-domain` so it was genuinely
+   behind `origin/production`; the watcher pulled `8f0fb6f → 1c5e7a2` on its next poll, applied the update in 20 s
+   (composer, migrate, optimize:clear, supervisor restart) and the app stayed healthy.
+   The core path (pull, rebuild, recreate both apps) was exercised later the same day by a real release: promoted at
+   00:40:56, image rebuilt in 3.5 min (warm cache), both projects updated by 00:46:34, no manual step.
+
+Caveats:
+
+- The watcher follows the **branch tip**, not tags. It skips a repo silently (only a journal warning) if it is not on
+  `production`, has uncommitted changes, or has diverged, so do not edit or `git reset` the host checkouts (the test in
+  step 6 was a deliberate exception and left the tree clean).
+- It does not follow `dash-backend-docker` (compose, `domain-config-layers`, the watcher itself) or the env files.
+- `local/dash-backend-core:latest` is a floating tag: rollback means stopping the watcher, checking out the previous
+  commit in `~/dash-backend`, rebuilding, recreating, and moving `production` back before restarting the watcher.
+- Pushes to `production` now restart preview (as pushes to `development` restart staging).
+- It needs working git credentials on the host, which today means the token embedded in the remote URLs (including
+  the new core clone). Rotating that token means updating the remotes on all three checkouts.
+- Obsolete and safe to remove: `~/dash-backend-src`, `~/dash-backend.stale-*`, and the image
+  `local/dash-backend:v1.4.0-core` (3.6 GB).
+
+**Kiosk card page.** The Android kiosk on preview showed "content unavailable". Cause: `LAB_KIOSK_AGUI_URL` (the
+page that draws the AG-UI cards, `vanexa-app` `/kiosk-agui`) was set on staging but never added to preview's env.
+Fixed by adding `LAB_KIOSK_AGUI_URL=https://app.vanexa.cl/kiosk-agui` to `.env.vanexa.preview` (in place) and restarting
+the app; the backend then served the value and the page returned `200` against `api-preview`/`ws-preview`. The kiosk
+must be relaunched to pick it up. **Side effect still to resolve:** staging's value also points at `app.vanexa.cl`,
+which after the frontend redeploy below is wired to preview, so staging kiosks now mix a staging session with a
+preview page. It should become `https://app-staging.vanexa.cl/kiosk-agui`.
+
+**Frontends (2026-09-25).** The three production apps (`system.vanexa.cl`, `vanexa.cl`/`www`, `app.vanexa.cl`) were
+rebuilt against `api-preview` / `ws-preview.vanexa.cl`, and the three staging apps were deployed for the first time to
+`system-staging`, `web-staging` and `app-staging.vanexa.cl` against staging. This was done by editing the gitignored
+`apps/vanexa-<app>/.env.vanexa-<app>.production` and `.staging` files and running
+`node scripts/deploy-frontend.js production …` from `vanexa-ci-cdk`; the live bundles were checked for the right
+backend hostnames and CORS was verified for all seven origins. See `vanexa-backend-domain/docs/PREVIEW-ENV.md` §6.
+
+## 4.10 Open items
+
+- [ ] Create a dedicated Cloudflare API token for preview and stop using staging's.
+- [ ] Reboot test with nobody logged in (containers come back, `cloudflared-preview` returns).
+- [ ] Block DB/Redis/MailHog ports at `DOCKER-USER`/network level (they listen on `0.0.0.0`).
+- [ ] Preview-scoped AWS credentials instead of staging's admin key; rotate Redis password.
+- [ ] Fix staging's `LAB_KIOSK_AGUI_URL` (see 4.9).
+- [ ] Delete the obsolete `~/dash-backend-src`, `~/dash-backend.stale-*` and the image `local/dash-backend:v1.4.0-core`.
+- [ ] Rotate the GitHub token embedded in the git remote URLs on the machine (it was printed to a
+      terminal during this install), and move to a credential helper or deploy keys.
+- [ ] Commit or discard the `provision-lab-rag.sh` changes in `vanexa-ci-cdk`; decide on `d10d99a`.
+- [ ] `docker-compose.image-only.yml` does not drop the base mounts on Compose v5 (4.6 item 2); fix it with `!override`, or retire it, since preview no longer uses it.
+- [ ] RAM is 15 GB against the recommended 32 GB for two full stacks; watch memory under load.
+- [ ] `FRONTEND_URL` on preview still points at the production sites; review it.
