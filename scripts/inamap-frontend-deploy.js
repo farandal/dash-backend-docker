@@ -24,6 +24,9 @@
 //   INAMAP_FRONTEND_BUILD_ONLY=1   build everything, publish nothing, need no
 //                                  Cloudflare credentials, do not record state.
 //   INAMAP_FRONTEND_DIR            checkout to build (default ../inamap-frontend-domain)
+//   INAMAP_TOOLCHAIN_BIN           directory with the node (>=20.19) and pnpm to build
+//                                  with, prepended to PATH for every child process
+//                                  (the preview box's system node is 18)
 //   INAMAP_BACKEND_ENV_FILE        backend env to read REVERB_APP_KEY from
 //   INAMAP_RELEASE_STAGE           VITE_APP_RELEASE_STAGE for production (default `release`)
 //   CF_API_TOKEN / CF_ACCOUNT_ID   override whatever the credentials file says
@@ -108,10 +111,18 @@ function parseEnvFile(filePath) {
   return values;
 }
 
+function childEnv(extraEnv) {
+  const env = { ...process.env, ...(extraEnv || {}) };
+  if (process.env.INAMAP_TOOLCHAIN_BIN) {
+    env.PATH = `${process.env.INAMAP_TOOLCHAIN_BIN}${path.delimiter}${env.PATH || ''}`;
+  }
+  return env;
+}
+
 function run(cwd, cmd, args, extraEnv) {
   const result = spawnSync(cmd, args, {
     cwd,
-    env: { ...process.env, ...(extraEnv || {}) },
+    env: childEnv(extraEnv),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
