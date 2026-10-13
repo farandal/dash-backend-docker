@@ -5,7 +5,7 @@
 // Thin wrapper so each log stream can be registered as its own tiny pm2 app —
 // `pm2 monit` then gives a real-time split-pane dashboard across all of them.
 // Usage: node scripts/log-tail.js <project> <logtype>
-//   project: kitchntabs | vanexa
+//   project: kitchntabs | vanexa | inamap
 //   logtype: laravel | horizon | reverb | ai-agents | container
 
 const path = require('path');
@@ -14,6 +14,17 @@ const { spawn, spawnSync } = require('child_process');
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const LOG_DIR = '/var/www/dash/storage/logs';
 const WAIT_POLL_MS = 3000;
+
+// kitchntabs/vanexa run from THIS repo's shared docker-compose.yml, selected
+// via --env-file .env.<project>. inamap-backend-docker is its own separate
+// repo/compose project with no --env-file flag (its compose file auto-reads
+// the plain `.env` next to it) — see git-watcher.js's PROJECT_CONFIG for the
+// same split, kept in sync here.
+const PROJECT_CONFIG = {
+  kitchntabs: { composeDir: PROJECT_DIR, composeArgs: ['--env-file', '.env.kitchntabs'] },
+  vanexa: { composeDir: PROJECT_DIR, composeArgs: ['--env-file', '.env.vanexa'] },
+  inamap: { composeDir: path.resolve(PROJECT_DIR, '../inamap-backend-docker'), composeArgs: [] },
+};
 
 // Blocks until `docker compose ... exec app true` actually succeeds — i.e. the
 // container exists AND is running AND is accepting execs (not just "created").
@@ -25,10 +36,11 @@ const WAIT_POLL_MS = 3000;
 // cold-start for CPU). Waiting quietly here instead of crash-looping avoids
 // that entirely.
 function waitForContainer(project) {
+  const cfg = PROJECT_CONFIG[project];
   let announced = false;
   for (;;) {
-    const check = spawnSync('docker', ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'true'], {
-      cwd: PROJECT_DIR,
+    const check = spawnSync('docker', ['compose', ...cfg.composeArgs, 'exec', 'app', 'true'], {
+      cwd: cfg.composeDir,
     });
     if (check.status === 0) return;
     if (!announced) {
@@ -49,12 +61,12 @@ const LOG_FILES = {
 const project = process.argv[2];
 const logtype = process.argv[3];
 
-if (!['kitchntabs', 'vanexa'].includes(project)) {
-  console.error(`Unknown project "${project}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|ai-agents|container>`);
+if (!Object.keys(PROJECT_CONFIG).includes(project)) {
+  console.error(`Unknown project "${project}". Usage: node scripts/log-tail.js <kitchntabs|vanexa|inamap> <laravel|horizon|reverb|ai-agents|container>`);
   process.exit(1);
 }
 if (!['laravel', 'horizon', 'reverb', 'ai-agents', 'container'].includes(logtype)) {
-  console.error(`Unknown logtype "${logtype}". Usage: node scripts/log-tail.js <kitchntabs|vanexa> <laravel|horizon|reverb|ai-agents|container>`);
+  console.error(`Unknown logtype "${logtype}". Usage: node scripts/log-tail.js <kitchntabs|vanexa|inamap> <laravel|horizon|reverb|ai-agents|container>`);
   process.exit(1);
 }
 
@@ -74,9 +86,11 @@ if (logtype === 'ai-agents') {
   logFiles = [aiAgentsLogFile];
 }
 
+const cfg = PROJECT_CONFIG[project];
+
 const args = logtype === 'container'
-  ? ['compose', '--env-file', `.env.${project}`, 'logs', '-f', '--tail', '50', 'app']
-  : ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'tail', '-f', ...logFiles];
+  ? ['compose', ...cfg.composeArgs, 'logs', '-f', '--tail', '50', 'app']
+  : ['compose', ...cfg.composeArgs, 'exec', 'app', 'tail', '-f', ...logFiles];
 
 waitForContainer(project);
 
@@ -85,8 +99,8 @@ waitForContainer(project);
 if (aiAgentsLogFile) {
   let announced = false;
   for (;;) {
-    const check = spawnSync('docker', ['compose', '--env-file', `.env.${project}`, 'exec', 'app', 'test', '-f', aiAgentsLogFile], {
-      cwd: PROJECT_DIR,
+    const check = spawnSync('docker', ['compose', ...cfg.composeArgs, 'exec', 'app', 'test', '-f', aiAgentsLogFile], {
+      cwd: cfg.composeDir,
     });
     if (check.status === 0) break;
     if (!announced) {
@@ -99,7 +113,7 @@ if (aiAgentsLogFile) {
 
 console.log(`[log-tail] ${project}/${logtype}: docker ${args.join(' ')}`);
 
-const child = spawn('docker', args, { cwd: PROJECT_DIR, stdio: 'inherit' });
+const child = spawn('docker', args, { cwd: cfg.composeDir, stdio: 'inherit' });
 
 // Exit with the child's code so pm2's own restart/backoff handles retries —
 // e.g. right after boot, before the container is up yet, `exec` fails fast

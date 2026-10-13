@@ -21,24 +21,74 @@
 // with no dash-backend checkout on disk at all) — without it, every cycle would
 // fail its `git fetch` against a path that doesn't exist and warn forever.
 
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
 const POLL_INTERVAL_MS = 60_000;
+const ACTIVE_PROJECTS_FILE = path.join(PROJECT_DIR, '.env.projects');
 // Config-driven so switching which branch preprod tracks (e.g. development ->
 // production) is a supervisor-level env change, not a code edit + redeploy.
 const BRANCH = process.env.DASH_WATCHER_BRANCH || 'development';
 const SKIP_CORE = process.env.DASH_WATCHER_SKIP_CORE === '1';
 
 // Domain repos map 1:1 to a running docker-compose project; dash-backend (core) is
-// shared and, when it changes, affects every project below.
+// shared and, when it changes, affects every project that mounts it (see
+// usesCoreImage in PROJECT_CONFIG below).
 const DOMAIN_REPOS = [
   { name: 'kitchntabs-backend-domain', path: '../kitchntabs-backend-domain', project: 'kitchntabs' },
   { name: 'vanexa-backend-domain', path: '../vanexa-backend-domain', project: 'vanexa' },
+  { name: 'inamap-backend-domain', path: '../inamap-backend-domain', project: 'inamap' },
 ];
 const CORE_REPO = { name: 'dash-backend', path: '../dash-backend' };
-const PROJECTS = ['kitchntabs', 'vanexa'];
+
+// Per-project docker-compose invocation shape. kitchntabs/vanexa share THIS
+// repo's docker-compose.yml and build local/dash-backend-core:latest FROM
+// dash-backend source (see CORE_REPO handling below) — selected via
+// --env-file .env.<project>, hence usesCoreImage:true. inamap-backend-docker
+// is a fully separate repo/compose project (its own .env, no --env-file flag
+// needed) that runs purely off a published DASH_IMAGE tag — a dash-backend
+// source change has nothing to do with it, so usesCoreImage:false skips the
+// core-triggered force-recreate for it entirely (there's nothing for it to
+// pick up; bumping its DASH_IMAGE tag is a separate, manual action).
+const PROJECT_CONFIG = {
+  kitchntabs: { composeDir: PROJECT_DIR, composeArgs: ['--env-file', '.env.kitchntabs'], usesCoreImage: true },
+  vanexa: { composeDir: PROJECT_DIR, composeArgs: ['--env-file', '.env.vanexa'], usesCoreImage: true },
+  inamap: {
+    composeDir: path.resolve(PROJECT_DIR, '../inamap-backend-docker'),
+    composeArgs: [],
+    usesCoreImage: false,
+  },
+};
+const PROJECTS = Object.keys(PROJECT_CONFIG);
+
+// Frontend repos aren't a docker-compose project at all — a moved commit here
+// triggers a build + `wrangler pages deploy`, not composer/migrate/supervisorctl.
+// See scripts/inamap-frontend-deploy.js for why (no GitHub App Git integration;
+// this box drives the deploy directly instead).
+const FRONTEND_REPOS = [
+  { name: 'inamap-frontend-domain', path: '../inamap-frontend-domain', deployScript: 'inamap-frontend-deploy.js' },
+];
+
+// Which projects this box actually manages right now — not every project a
+// fresh clone knows about is one this specific machine has the capacity to
+// run (confirmed live: a third full stack alongside kitchntabs/vanexa pushed
+// this box's Docker Desktop into repeated OOM territory). Read fresh every
+// cycle (not cached at startup) so toggling scripts/toggle-project.sh takes
+// effect within one poll interval, no pm2 restart of dash-watcher needed.
+// Missing file or missing/empty ACTIVE_PROJECTS = every known project is
+// active — the pre-existing default, so a fresh clone with no .env.projects
+// behaves exactly as before this existed.
+function activeProjects() {
+  if (!fs.existsSync(ACTIVE_PROJECTS_FILE)) return null;
+  const content = fs.readFileSync(ACTIVE_PROJECTS_FILE, 'utf8');
+  const match = content.match(/^ACTIVE_PROJECTS=(.*)$/m);
+  if (!match) return null;
+  const list = match[1].trim();
+  if (!list) return null;
+  return new Set(list.split(',').map((p) => p.trim()).filter(Boolean));
+}
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -84,12 +134,15 @@ function run(cwd, cmd, args) {
   return { ok, stdout, stderr, error: result.error };
 }
 
-// Every docker compose invocation always gets --env-file .env.<project> — this is
-// the one mistake that already bit this project once (compose silently targeting
-// the wrong/empty project when the flag is missing), so it's structurally baked in
-// here rather than left to be remembered at each call site.
+// kitchntabs/vanexa compose invocations always get --env-file .env.<project> —
+// this is the one mistake that already bit this project once (compose silently
+// targeting the wrong/empty project when the flag is missing), so it's
+// structurally baked into PROJECT_CONFIG rather than left to be remembered at
+// each call site. inamap runs from its own directory with no --env-file flag
+// (its compose file auto-reads the plain `.env` sitting next to it).
 function compose(project, ...args) {
-  return run(PROJECT_DIR, 'docker', ['compose', '--env-file', `.env.${project}`, ...args]);
+  const cfg = PROJECT_CONFIG[project];
+  return run(cfg.composeDir, 'docker', ['compose', ...cfg.composeArgs, ...args]);
 }
 
 function composeExecApp(project, ...args) {
@@ -226,6 +279,9 @@ function runCycle() {
   isRunning = true;
 
   try {
+    const active = activeProjects();
+    const isActive = (project) => !active || active.has(project);
+
     const coreResult = SKIP_CORE ? 'none' : syncRepo(CORE_REPO);
     const coreChanged = coreResult === 'pulled';
 
@@ -252,16 +308,32 @@ function runCycle() {
 
     const domainChanged = {};
     for (const repo of DOMAIN_REPOS) {
+      if (!isActive(repo.project)) continue; // no fetch, no action — fully quiet while disabled
       domainChanged[repo.project] = syncRepo(repo) === 'pulled';
     }
 
     for (const project of PROJECTS) {
-      const needsUpdate = coreChanged || domainChanged[project];
+      if (!isActive(project)) continue;
+      const projectCoreChanged = coreChanged && PROJECT_CONFIG[project].usesCoreImage;
+      const needsUpdate = projectCoreChanged || domainChanged[project];
       if (!needsUpdate) continue;
-      updateProject(project, { coreChanged });
+      updateProject(project, { coreChanged: projectCoreChanged });
     }
 
-    if (!coreChanged && !Object.values(domainChanged).some(Boolean)) {
+    let anyFrontendChanged = false;
+    for (const repo of FRONTEND_REPOS) {
+      if (syncRepo(repo) !== 'pulled') continue;
+      anyFrontendChanged = true;
+      log(`${repo.name}: changed — running ${repo.deployScript}`);
+      const deploy = run(PROJECT_DIR, 'node', [path.join('scripts', repo.deployScript)]);
+      if (!deploy.ok) {
+        err(`${repo.name}: ${repo.deployScript} failed — ${deploy.stderr}`);
+      } else {
+        log(`${repo.name}: deploy complete`);
+      }
+    }
+
+    if (!coreChanged && !Object.values(domainChanged).some(Boolean) && !anyFrontendChanged) {
       log('no changes');
     }
   } finally {
