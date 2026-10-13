@@ -97,6 +97,20 @@ function activeProjects() {
   return new Set(list.split(',').map((p) => p.trim()).filter(Boolean));
 }
 
+// A host runs a subset of the projects (the preview box gets inamap only after its
+// repos are cloned). A missing checkout is logged once per process, not every 60s;
+// a checkout that exists but is on the wrong branch / dirty still warns every cycle
+// via syncRepo, because that one is a real problem someone has to act on.
+const missingLogged = new Set();
+function repoPresent(repo) {
+  if (fs.existsSync(path.resolve(PROJECT_DIR, repo.path, '.git'))) return true;
+  if (!missingLogged.has(repo.name)) {
+    missingLogged.add(repo.name);
+    warn(`${repo.name}: no checkout at ${repo.path} — skipping until it is cloned (logged once; restart to re-check)`);
+  }
+  return false;
+}
+
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
@@ -316,6 +330,7 @@ function runCycle() {
     const domainChanged = {};
     for (const repo of DOMAIN_REPOS) {
       if (!isActive(repo.project)) continue; // no fetch, no action — fully quiet while disabled
+      if (!repoPresent(repo)) continue;
       domainChanged[repo.project] = syncRepo(repo) === 'pulled';
     }
 
@@ -329,6 +344,7 @@ function runCycle() {
 
     let anyFrontendChanged = false;
     for (const repo of SKIP_FRONTEND ? [] : FRONTEND_REPOS) {
+      if (!repoPresent(repo)) continue;
       if (syncRepo(repo) !== 'pulled') continue;
       anyFrontendChanged = true;
       log(`${repo.name}: changed — running ${repo.deployScript}`);
