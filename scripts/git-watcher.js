@@ -21,10 +21,11 @@
 // with no dash-backend checkout on disk at all) — without it, every cycle would
 // fail its `git fetch` against a path that doesn't exist and warn forever.
 //
-// DASH_WATCHER_SKIP_FRONTEND=1 disables the FRONTEND_REPOS deploy hook. The only
-// hook today (inamap-frontend-deploy.js) builds against the *staging* env files and
-// publishes to the staging Cloudflare Pages projects, so a host that is NOT the
-// staging box (e.g. the production-tracking preview box) must set this, or a moved
+// DASH_WATCHER_SKIP_FRONTEND=1 disables the FRONTEND_REPOS deploy hook entirely.
+// Which Cloudflare Pages projects the hook publishes to is picked by
+// INAMAP_FRONTEND_ENV (see inamap-frontend-deploy.js): unset = the *staging*
+// projects, `production` = the production ones. A host that tracks `production`
+// must either set INAMAP_FRONTEND_ENV=production or this flag, otherwise a moved
 // inamap-frontend-domain commit there would overwrite the staging frontends.
 
 const fs = require('fs');
@@ -74,6 +75,22 @@ const PROJECTS = Object.keys(PROJECT_CONFIG);
 // triggers a build + `wrangler pages deploy`, not composer/migrate/supervisorctl.
 // See scripts/inamap-frontend-deploy.js for why (no GitHub App Git integration;
 // this box drives the deploy directly instead).
+const FRONTEND_RETRY_MS = 15 * 60_000;
+const frontendRetryAfter = {};
+// inamap-frontend-deploy.js records the commit it last published here; it is keyed
+// by the same INAMAP_FRONTEND_ENV profile name the script reads.
+function deployedFrontendSha() {
+  const file = path.join(
+    PROJECT_DIR,
+    'storage',
+    `inamap-frontend-${process.env.INAMAP_FRONTEND_ENV || 'staging'}.sha`
+  );
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
 const FRONTEND_REPOS = [
   { name: 'inamap-frontend-domain', path: '../inamap-frontend-domain', deployScript: 'inamap-frontend-deploy.js' },
 ];
@@ -342,14 +359,29 @@ function runCycle() {
     let anyFrontendChanged = false;
     for (const repo of SKIP_FRONTEND ? [] : FRONTEND_REPOS) {
       if (!repoPresent(repo)) continue;
-      if (syncRepo(repo) !== 'pulled') continue;
+      const synced = syncRepo(repo);
+      if (synced === 'skip') continue;
+
+      // Deploy when the branch just moved, or when what is deployed (recorded by the
+      // deploy script on success) no longer matches HEAD — so a failed deploy is
+      // retried instead of waiting for the next commit. No state file = unknown, so
+      // never deploy on that alone. A failure backs off for FRONTEND_RETRY_MS so a
+      // broken build can't re-run every 60s on a box shared with the app containers.
+      const head = run(repo.path, 'git', ['rev-parse', 'HEAD']).stdout;
+      const deployed = deployedFrontendSha();
+      const stale = Boolean(deployed) && deployed !== head;
+      const retryDue = Date.now() >= (frontendRetryAfter[repo.name] || 0);
+      if (synced !== 'pulled' && !(stale && retryDue)) continue;
+
       anyFrontendChanged = true;
-      log(`${repo.name}: changed — running ${repo.deployScript}`);
+      log(`${repo.name}: ${synced === 'pulled' ? 'changed' : 'deployed commit is stale'} — running ${repo.deployScript}`);
       const deploy = run(PROJECT_DIR, 'node', [path.join('scripts', repo.deployScript)]);
       if (!deploy.ok) {
         err(`${repo.name}: ${repo.deployScript} failed — ${deploy.stderr}`);
+        frontendRetryAfter[repo.name] = Date.now() + FRONTEND_RETRY_MS;
       } else {
         log(`${repo.name}: deploy complete`);
+        delete frontendRetryAfter[repo.name];
       }
     }
 
