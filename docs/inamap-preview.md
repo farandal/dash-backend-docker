@@ -11,7 +11,7 @@ Background: [SETUP.md](../SETUP.md) Part 4 (how the box was built), [watcher.md]
 | Tracks | `production` (`DASH_WATCHER_BRANCH`, already set) |
 | Backend hostnames | `api.inamap.space`, `ws.inamap.space` |
 | Host ports | app `25200`, reverb `27001`, pgsql `25434`, redis `25389`, mailhog `25029`/`25030` — none collide with kitchntabs (`250xx`, `25432`, `25379`) or vanexa (`251xx`, `25433`, `25388`, `26001`) |
-| Frontend | not decided yet, see §7 |
+| Frontend | Cloudflare Pages, published by the watcher (§7) |
 
 > **Capacity.** SETUP.md §4.10 already flags this box as 15 GB against a recommended 32 GB for two
 > stacks. The Mac staging box was OOM-killed repeatedly with three. Watch `free -h` / `docker stats`
@@ -47,15 +47,18 @@ git fetch origin && git log --oneline HEAD..origin/production     # sanity check
 git pull --ff-only
 ```
 
-**Before restarting the watcher**, add this to `scripts/systemd/dash-watcher.env`:
+**Before restarting the watcher**, set these in `scripts/systemd/dash-watcher.env`
+(`dash-watcher.env.example` documents each):
 
 ```
-DASH_WATCHER_SKIP_FRONTEND=1
+INAMAP_FRONTEND_ENV=production
+INAMAP_TOOLCHAIN_BIN=/home/fablabadmin/.local/node/bin
 ```
 
-Without it, a moved `inamap-frontend-domain` commit makes the watcher run
-`inamap-frontend-deploy.js`, which builds with the *staging* env files and `wrangler pages deploy`s
-over the Mac's `inamap-*-staging` Cloudflare Pages projects. This box must not do that.
+`INAMAP_FRONTEND_ENV` is what keeps the frontend hook off the staging Pages projects: unset, the
+script's default profile is `staging`, and a moved `inamap-frontend-domain` commit would overwrite
+the Mac's `inamap-*-staging` sites. `DASH_WATCHER_SKIP_FRONTEND=1` is the alternative if a host
+should not publish a frontend at all.
 
 ## 3. Clone the three repos as siblings of `dash-backend-docker`
 
@@ -148,12 +151,22 @@ sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared-inamap
 
 One connector per tunnel only (two connectors on one tunnel produce random 502s).
 
-## 7. Frontend — open
+## 7. Frontend — Cloudflare Pages, published by the watcher
 
-Not decided. The existing preview pattern is `*-ci-cdk` + `deploy-frontend.js` to S3/CloudFront
-(no `inamap-ci-cdk` exists yet). `inamap-frontend-deploy.js` targets the staging Pages projects and
-must not be reused as is from this box (hence `DASH_WATCHER_SKIP_FRONTEND=1`). Needs three
-hostnames and a mechanism from the owner.
+Production hostnames: `inamap.space` + `www.inamap.space` (web), `app.inamap.space`,
+`system.inamap.space`; Pages projects `inamap-web`, `inamap-app`, `inamap-system`
+(production branch `production`, direct upload).
+
+`scripts/inamap-frontend-deploy.js` with `INAMAP_FRONTEND_ENV=production` generates the apps'
+`.env` files from the production hostnames plus the backend's `REVERB_APP_KEY`, builds with a
+frozen lockfile and runs `wrangler pages deploy`. The watcher runs it when `inamap-frontend-domain`
+moves or when the commit recorded in `.inamap-frontend-production.sha` is stale (retry every
+15 min). The box's system node is 18, so the build uses a user-local Node 22 + pnpm 11.17.0 via
+`INAMAP_TOOLCHAIN_BIN`. Needs `.env.inamap-pages` (`CF_ACCOUNT_ID`, and a `CF_API_TOKEN` with
+**Account → Cloudflare Pages → Edit** only).
+
+Full procedure, the Pages/DNS provisioning calls and the token steps are in
+`inamap-documentation/devops/preview-env.md` (§6, §11).
 
 ## 8. Verify
 
@@ -175,11 +188,11 @@ logged in.
 `supervisorctl restart all` does not restart php-fpm (`opcache.validate_timestamps=Off`), so the
 watcher now restarts the app container after every domain-only deploy (~1 min of API downtime).
 Verify a deploy by hitting the changed endpoint through the public hostname, not by the log.
-The 2026-10-13 install is recorded in `inamap-documentation/desarrollo/05-entorno-produccion.md`.
+The 2026-10-13 install is recorded in `inamap-documentation/devops/preview-env.md`.
 
 ## Open items
 
-- Frontend mechanism and hostnames (§7).
-- Cloudflare token: the box reuses staging's for kitchntabs/vanexa (SETUP.md §4.10); get a dedicated one for inamap.
-- RAM headroom with three stacks under load is unverified.
+- `CF_API_TOKEN` (Pages:Edit only) in `.env.inamap-pages` on the box; until it is there a frontend
+  change fails fast and retries every 15 min. The first release was published from a workstation.
+- Cloudflare token for this tunnel/DNS was staging's, used from a workstation; get a dedicated one.
 - `production` is an alias of `development` on all three repos, so there is no release gate yet.
