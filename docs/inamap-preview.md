@@ -80,8 +80,11 @@ mkdir -p storage/app-storage/{app/public,framework/{cache,sessions,views},logs} 
          storage/bootstrap-cache storage/pgsql-data reports
 ```
 
-`.env` (compose level): `DASH_IMAGE=farandal/dash-backend:<published tag>-core` (no local build, no
-`~/dash-backend` needed — verify the tag exists with `docker pull` before `up`),
+`.env` (compose level): `DASH_IMAGE=local/dash-backend-core:latest` — the image the watcher already
+builds here for kitchntabs/vanexa from `dash-backend` `production` (the published
+`farandal/dash-backend:latest-core` also works but is older; used on 2026-10-13 after checking that
+every `App\\` class the inamap domain imports exists in that core). Note the watcher does not recreate
+`inamap_app` when the image is rebuilt: `docker compose up -d --force-recreate app` by hand,
 `APP_ENV_FILE=./.env.app.production`, a real `DB_PASSWORD` (`openssl rand -hex 16`, same value in
 both files). **Keep `DB_DATABASE_TEST` set** — blank becomes a default and leaves `pgsql_setup`
 unhealthy with `app` stuck in `Created`.
@@ -167,11 +170,12 @@ free -h && docker stats --no-stream
 Reboot test: after `sudo reboot`, `inamap_app` and `cloudflared-inamap` must come back with nobody
 logged in.
 
-### Gotcha: php-fpm keeps old code
+### php-fpm keeps old code
 
-The watcher's `supervisorctl restart all` does not restart php-fpm (`opcache.validate_timestamps=Off`).
-After a domain deploy that changes routes/controllers/models, `docker restart inamap_app` and test the
-changed endpoint through the public hostname. See the `vanexa-backend-deploy` skill §7.
+`supervisorctl restart all` does not restart php-fpm (`opcache.validate_timestamps=Off`), so the
+watcher now restarts the app container after every domain-only deploy (~1 min of API downtime).
+Verify a deploy by hitting the changed endpoint through the public hostname, not by the log.
+The 2026-10-13 install is recorded in `inamap-documentation/desarrollo/05-entorno-produccion.md`.
 
 ## Open items
 

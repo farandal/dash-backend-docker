@@ -270,19 +270,16 @@ function updateProject(project, { coreChanged }) {
   }
 
   if (!coreChanged) {
-    // Container wasn't recreated, so Horizon/Reverb/the scheduler are still
-    // holding the old code in memory — restart them explicitly to pick up the
-    // pull. (A core-triggered recreate gets this for free via a fresh supervisord.)
-    const restart = composeExecApp(
-      project,
-      'supervisorctl',
-      '-c',
-      '/etc/supervisor/supervisord.conf',
-      'restart',
-      'all'
-    );
+    // Container wasn't recreated, so Horizon/Reverb/the scheduler AND php-fpm are
+    // still holding the old code. `supervisorctl restart all` is not enough: php-fpm
+    // is not supervised and runs with opcache.validate_timestamps=Off, so web
+    // requests keep serving the previously compiled routes/controllers (a new route
+    // stays a 404) — confirmed on the preview box 2026-10-02. Restarting the
+    // container is the only thing that refreshes it; ~1 min of API downtime per
+    // domain deploy, accepted. (A core-triggered recreate already did this above.)
+    const restart = compose(project, 'restart', 'app');
     if (!restart.ok) {
-      err(`${project}: supervisorctl restart failed — ${restart.stderr}`);
+      err(`${project}: app restart failed — ${restart.stderr}`);
       return;
     }
   }
