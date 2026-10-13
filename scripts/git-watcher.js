@@ -20,6 +20,12 @@
 // running purely off a published DASH_IMAGE, e.g. with docker-compose.image-only.yml,
 // with no dash-backend checkout on disk at all) — without it, every cycle would
 // fail its `git fetch` against a path that doesn't exist and warn forever.
+//
+// DASH_WATCHER_SKIP_FRONTEND=1 disables the FRONTEND_REPOS deploy hook. The only
+// hook today (inamap-frontend-deploy.js) builds against the *staging* env files and
+// publishes to the staging Cloudflare Pages projects, so a host that is NOT the
+// staging box (e.g. the production-tracking preview box) must set this, or a moved
+// inamap-frontend-domain commit there would overwrite the staging frontends.
 
 const fs = require('fs');
 const path = require('path');
@@ -32,6 +38,7 @@ const ACTIVE_PROJECTS_FILE = path.join(PROJECT_DIR, '.env.projects');
 // production) is a supervisor-level env change, not a code edit + redeploy.
 const BRANCH = process.env.DASH_WATCHER_BRANCH || 'development';
 const SKIP_CORE = process.env.DASH_WATCHER_SKIP_CORE === '1';
+const SKIP_FRONTEND = process.env.DASH_WATCHER_SKIP_FRONTEND === '1';
 
 // Domain repos map 1:1 to a running docker-compose project; dash-backend (core) is
 // shared and, when it changes, affects every project that mounts it (see
@@ -321,7 +328,7 @@ function runCycle() {
     }
 
     let anyFrontendChanged = false;
-    for (const repo of FRONTEND_REPOS) {
+    for (const repo of SKIP_FRONTEND ? [] : FRONTEND_REPOS) {
       if (syncRepo(repo) !== 'pulled') continue;
       anyFrontendChanged = true;
       log(`${repo.name}: changed — running ${repo.deployScript}`);
