@@ -80,11 +80,7 @@ const frontendRetryAfter = {};
 // inamap-frontend-deploy.js records the commit it last published here; it is keyed
 // by the same INAMAP_FRONTEND_ENV profile name the script reads.
 function deployedFrontendSha() {
-  const file = path.join(
-    PROJECT_DIR,
-    'storage',
-    `inamap-frontend-${process.env.INAMAP_FRONTEND_ENV || 'staging'}.sha`
-  );
+  const file = path.join(PROJECT_DIR, `.inamap-frontend-${process.env.INAMAP_FRONTEND_ENV || 'staging'}.sha`);
   try {
     return fs.readFileSync(file, 'utf8').trim();
   } catch {

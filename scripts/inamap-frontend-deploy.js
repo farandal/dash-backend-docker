@@ -31,7 +31,7 @@
 //   INAMAP_RELEASE_STAGE           VITE_APP_RELEASE_STAGE for production (default `release`)
 //   CF_API_TOKEN / CF_ACCOUNT_ID   override whatever the credentials file says
 //
-// On success it records the deployed commit in storage/inamap-frontend-<profile>.sha,
+// On success it records the deployed commit in .inamap-frontend-<profile>.sha (git-ignored),
 // which git-watcher.js reads to retry a deploy that failed or never happened.
 //
 // Also runnable standalone for a manual redeploy:
@@ -82,7 +82,7 @@ const PROFILES = {
 const PROFILE_NAME = process.env.INAMAP_FRONTEND_ENV || 'staging';
 const PROFILE = PROFILES[PROFILE_NAME];
 const BUILD_ONLY = process.env.INAMAP_FRONTEND_BUILD_ONLY === '1';
-const STATE_FILE = path.join(PROJECT_DIR, 'storage', `inamap-frontend-${PROFILE_NAME}.sha`);
+const STATE_FILE = path.join(PROJECT_DIR, `.inamap-frontend-${PROFILE_NAME}.sha`);
 
 // Keeps a shared box usable while three Vite builds run, and caps node's heap so
 // one build can't take the OOM killer to the app containers next to it.
@@ -342,7 +342,6 @@ function main() {
   }
 
   if (!BUILD_ONLY && sha) {
-    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
     fs.writeFileSync(STATE_FILE, `${sha}\n`);
     log(`recorded deployed commit ${sha.slice(0, 7)} in ${path.relative(PROJECT_DIR, STATE_FILE)}`);
   }
