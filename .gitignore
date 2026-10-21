@@ -28,3 +28,6 @@ env.*
 Thumbs.db
 # last commit inamap-frontend-deploy.js published, per profile (read by git-watcher.js)
 /.inamap-frontend-*.sha
+# the same for mbtickets-frontend-deploy.js
+/.mbtickets-frontend-*.sha
+/.env.mbtickets-pages

@@ -1,5 +1,5 @@
 [Unit]
-Description=DASH backend git watcher (auto-pull kitchntabs/vanexa/inamap)
+Description=DASH backend git watcher (auto-pull kitchntabs/vanexa/inamap/mbtickets)
 # docker.service on Linux starts at boot with no login session required —
 # unlike Docker Desktop on macOS, this dependency alone is enough.
 After=docker.service network-online.target

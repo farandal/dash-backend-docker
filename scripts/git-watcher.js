@@ -27,6 +27,8 @@
 // projects, `production` = the production ones. A host that tracks `production`
 // must either set INAMAP_FRONTEND_ENV=production or this flag, otherwise a moved
 // inamap-frontend-domain commit there would overwrite the staging frontends.
+// mbtickets-frontend-domain is the same, via MBTICKETS_FRONTEND_ENV=production, except
+// that its script has no default profile and fails when the variable is missing.
 
 const fs = require('fs');
 const path = require('path');
@@ -48,6 +50,7 @@ const DOMAIN_REPOS = [
   { name: 'kitchntabs-backend-domain', path: '../kitchntabs-backend-domain', project: 'kitchntabs' },
   { name: 'vanexa-backend-domain', path: '../vanexa-backend-domain', project: 'vanexa' },
   { name: 'inamap-backend-domain', path: '../inamap-backend-domain', project: 'inamap' },
+  { name: 'mbtickets-backend-domain', path: '../mbtickets-backend-domain', project: 'mbtickets' },
 ];
 const CORE_REPO = { name: 'dash-backend', path: '../dash-backend' };
 
@@ -68,6 +71,14 @@ const PROJECT_CONFIG = {
     composeArgs: [],
     usesCoreImage: false,
   },
+  // Same shape as inamap: its own compose project and a pinned core image
+  // (DASH_IMAGE in mbtickets-backend-docker/.env), so a dash-backend change here has
+  // nothing to do with it — it needs features the `production` core of this box lacks.
+  mbtickets: {
+    composeDir: path.resolve(PROJECT_DIR, '../mbtickets-backend-docker'),
+    composeArgs: [],
+    usesCoreImage: false,
+  },
 };
 const PROJECTS = Object.keys(PROJECT_CONFIG);
 
@@ -77,10 +88,12 @@ const PROJECTS = Object.keys(PROJECT_CONFIG);
 // this box drives the deploy directly instead).
 const FRONTEND_RETRY_MS = 15 * 60_000;
 const frontendRetryAfter = {};
-// inamap-frontend-deploy.js records the commit it last published here; it is keyed
-// by the same INAMAP_FRONTEND_ENV profile name the script reads.
-function deployedFrontendSha() {
-  const file = path.join(PROJECT_DIR, `.inamap-frontend-${process.env.INAMAP_FRONTEND_ENV || 'staging'}.sha`);
+// Each deploy script records the commit it last published in its own state file, keyed
+// by the same profile variable the script reads (INAMAP_FRONTEND_ENV /
+// MBTICKETS_FRONTEND_ENV). mbtickets has no default profile: unset, the script refuses
+// to run, and this file name then never exists, so nothing is retried either.
+function deployedFrontendSha(repo) {
+  const file = path.join(PROJECT_DIR, repo.stateFile());
   try {
     return fs.readFileSync(file, 'utf8').trim();
   } catch {
@@ -88,7 +101,18 @@ function deployedFrontendSha() {
   }
 }
 const FRONTEND_REPOS = [
-  { name: 'inamap-frontend-domain', path: '../inamap-frontend-domain', deployScript: 'inamap-frontend-deploy.js' },
+  {
+    name: 'inamap-frontend-domain',
+    path: '../inamap-frontend-domain',
+    deployScript: 'inamap-frontend-deploy.js',
+    stateFile: () => `.inamap-frontend-${process.env.INAMAP_FRONTEND_ENV || 'staging'}.sha`,
+  },
+  {
+    name: 'mbtickets-frontend-domain',
+    path: '../mbtickets-frontend-domain',
+    deployScript: 'mbtickets-frontend-deploy.js',
+    stateFile: () => `.mbtickets-frontend-${process.env.MBTICKETS_FRONTEND_ENV || 'unset'}.sha`,
+  },
 ];
 
 // Which projects this box actually manages right now — not every project a
@@ -364,7 +388,7 @@ function runCycle() {
       // never deploy on that alone. A failure backs off for FRONTEND_RETRY_MS so a
       // broken build can't re-run every 60s on a box shared with the app containers.
       const head = run(repo.path, 'git', ['rev-parse', 'HEAD']).stdout;
-      const deployed = deployedFrontendSha();
+      const deployed = deployedFrontendSha(repo);
       const stale = Boolean(deployed) && deployed !== head;
       const retryDue = Date.now() >= (frontendRetryAfter[repo.name] || 0);
       if (synced !== 'pulled' && !(stale && retryDue)) continue;
