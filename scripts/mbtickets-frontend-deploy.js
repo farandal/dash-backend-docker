@@ -77,6 +77,34 @@ const PROFILES = {
       ws: `ws-preview.${ZONE}`,
     },
   },
+  // EXCEPTION (2026-10-22, asked by the product owner): the same four frontends also served from the zone's own
+  // hosts — the buyer site on www.mbtickets.dev and the bare mbtickets.dev, and dash., system., app.mbtickets.dev —
+  // built against the PREVIEW backend (api-/ws-preview) until a real production backend exists. Published by hand
+  // only (MBTICKETS_FRONTEND_ENV=public); the watcher runs the `production` profile and never this one. The preview
+  // backend must list these origins in its CORS layer (90-server-production) and the buyer site's two origins in
+  // MBT_CHECKOUT_RETURN_ORIGINS.
+  public: {
+    name: 'public',
+    branch: 'production',
+    cfEnvFile: '.env.mbtickets-pages',
+    pages: {
+      web: 'mbtickets-web',
+      dash: 'mbtickets-dash',
+      system: 'mbtickets-system',
+      app: 'mbtickets-app',
+    },
+    frozenLockfile: true,
+    siteSuffix: '',
+    venueSites: false,
+    hosts: {
+      web: `www.${ZONE}`, // also the bare zone (Pages custom domain): same project
+      dash: `dash.${ZONE}`,
+      system: `system.${ZONE}`,
+      app: `app.${ZONE}`,
+      api: `api-preview.${ZONE}`,
+      ws: `ws-preview.${ZONE}`,
+    },
+  },
 };
 
 const PROFILE_NAME = process.env.MBTICKETS_FRONTEND_ENV || '';
