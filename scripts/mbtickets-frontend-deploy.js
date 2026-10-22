@@ -65,6 +65,9 @@ const PROFILES = {
     // `pnpm install` rewriting pnpm-lock.yaml would leave the checkout dirty, and
     // git-watcher skips a dirty checkout forever — so never let install write it.
     frozenLockfile: true,
+    // Venue sites: {slug}-preview.mbtickets.dev, once the venue-sites Worker serves preview (then venueSites: true).
+    siteSuffix: '-preview',
+    venueSites: false,
     hosts: {
       web: `web-preview.${ZONE}`,
       dash: `dash-preview.${ZONE}`,
@@ -156,14 +159,14 @@ function backendReverbKey() {
 
 // dash and system read the same variable set (only the app's own public URL differs).
 // The Reverb key is the public Pusher-style key the browser sends, not the secret.
-function dashAdminEnv(h, selfHost, reverbKey) {
+function dashAdminEnv(h, selfHost, reverbKey, opts = {}) {
   const stage = process.env.MBTICKETS_RELEASE_STAGE || 'release';
   return [
     "VITE_ENV_PREFIX='VITE_'",
     `VITE_APP_FRONTEND_URL=https://${selfHost}`,
     `VITE_APP_BACKEND_URL=https://${h.api}`,
     `VITE_APP_ADMIN_API_URL=https://${h.api}/api`,
-    'VITE_APP_DEFAULT_REDIRECT=/dash',
+    `VITE_APP_DEFAULT_REDIRECT=${opts.redirect || '/dash'}`,
     "VITE_APP_GETAUTH_ENDPOINT='auth/getauth'",
     'VITE_APP_SOCKETS_ENABLED=true',
     'VITE_APP_SOCKETS_BROADCASTER=pusher',
@@ -184,6 +187,7 @@ function dashAdminEnv(h, selfHost, reverbKey) {
     'VITE_APP_RECAPTCHA_TOKEN=',
     `VITE_APP_RELEASE_STAGE=${stage}`,
     'VITE_APP_PRERELEASE_INVITATION_CODE=',
+    ...(opts.extra || []),
     '',
   ].join('\n');
 }
@@ -192,7 +196,13 @@ function writeProductionEnvFiles() {
   const h = PROFILE.hosts;
   const reverbKey = backendReverbKey();
   const files = [
-    ['apps/mbtickets-web/.env.production', `VITE_API_URL=https://${h.api}/api\n`],
+    // mbtickets-web runs on dash-admin since F11: same variable set, its own home, and the venue sites
+    // ({slug}<suffix>.<zone>). VITE_SITE_BASE_DOMAIN stays empty until the venue-sites Worker serves this
+    // environment (edge/venue-sites in mbtickets-frontend-domain); until then a venue is ?site=<slug>.
+    ['apps/mbtickets-web/.env.mbtickets-web.production', dashAdminEnv(h, h.web, reverbKey, {
+      redirect: '/',
+      extra: [`VITE_SITE_BASE_DOMAIN=${PROFILE.venueSites ? ZONE : ''}`, `VITE_SITE_HOST_SUFFIX=${PROFILE.siteSuffix || ''}`],
+    })],
     ['apps/mbtickets-app/.env.production', `VITE_API_URL=https://${h.api}/api\n`],
     ['apps/mbtickets-dash/.env.mbtickets-dash.production', dashAdminEnv(h, h.dash, reverbKey)],
     ['apps/mbtickets-system/.env.mbtickets-system.production', dashAdminEnv(h, h.system, reverbKey)],
@@ -209,9 +219,8 @@ function appsFor(profile) {
   return [
     {
       name: 'mbtickets-web',
-      // `build` is `tsc --noEmit && vite build`; Vite's default mode is production, so it
-      // loads apps/mbtickets-web/.env.production.
-      build: () => pnpm(FRONTEND_DIR, ['--filter', 'mbtickets-web', 'build']),
+      // dash-admin build since F11: CUSTOM_MODE=mbtickets-web.production (apps/mbtickets-web/.env.mbtickets-web.production).
+      build: () => pnpm(FRONTEND_DIR, ['run', 'build:web'], { MBT_ENV: 'production' }),
       dist: 'apps/mbtickets-web/dist',
       pagesProject: profile.pages.web,
     },
