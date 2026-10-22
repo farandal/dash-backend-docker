@@ -95,7 +95,8 @@ const PROFILES = {
     },
     frozenLockfile: true,
     siteSuffix: '',
-    venueSites: false,
+    // {slug}.mbtickets.dev: one Pages custom domain per venue on mbtickets-web until the venue-sites Worker.
+    venueSites: true,
     hosts: {
       web: `www.${ZONE}`, // also the bare zone (Pages custom domain): same project
       dash: `dash.${ZONE}`,
